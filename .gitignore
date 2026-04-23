@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# Build and test output
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# IDE and OS files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Runtime uploads or generated images
+*.log
+*.tmp
+*.bak
+*-extract*.png
+*-test*.png
+
+# Model and package caches
+.cache/
+cache/
+huggingface/
+models/
+checkpoints/
+onnx/
+

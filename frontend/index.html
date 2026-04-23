@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clothing Extractor</title>
+</head>
+<body>
+  <h2>Extract Clothes From an Image</h2>
+  <p>This tool keeps clothing pixels from the original image and returns a transparent PNG.</p>
+
+  <input type="file" id="fileInput" accept="image/*" />
+  <button onclick="uploadImage()">Extract Clothes</button>
+
+  <h3>Result:</h3>
+  <div style="
+    display: inline-block;
+    padding: 18px;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #fbf7ef, #eee5d8);
+    box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
+  ">
+    <img id="resultImage" style="max-width: 300px; display: block;" />
+  </div>
+
+  <script>
+    async function uploadImage() {
+      const fileInput = document.getElementById("fileInput");
+      const file = fileInput.files[0];
+
+      if (!file) {
+        alert("Please select an image first.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const response = await fetch("http://127.0.0.1:5000/extract-clothes", {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          alert(error?.error || "Failed to process image.");
+          return;
+        }
+
+        const blob = await response.blob();
+        const imageUrl = URL.createObjectURL(blob);
+        document.getElementById("resultImage").src = imageUrl;
+      } catch (error) {
+        console.error(error);
+        alert("Something went wrong.");
+      }
+    }
+  </script>
+</body>
+</html>
