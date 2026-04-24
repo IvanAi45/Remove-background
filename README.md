@@ -5,6 +5,12 @@ The backend uses a human parsing model to keep clothing pixels, such as tops,
 pants, skirts, dresses, hats, scarves, and belts, while removing background and
 non-clothing body parts.
 
+The app currently supports two output styles:
+
+- `Extract Clothes`: keeps all detected clothing in one transparent PNG
+- `Split Into Items`: tries to separate garments such as tops, pants, skirts,
+  dresses, belts, hats, and scarves into individual item cards
+
 ## Project Structure
 
 ```text
@@ -12,6 +18,8 @@ clothing-remover/
   backend/
     app.py
     requirements.txt
+    models/
+      fashn-human-parser/
   frontend/
     index.html
 ```
@@ -19,6 +27,7 @@ clothing-remover/
 ## Requirements
 
 - Python 3.10 or newer
+- Tested locally with Python 3.12
 - Internet access for the first run, because the model weights are downloaded
   from Hugging Face automatically
 
@@ -27,20 +36,19 @@ clothing-remover/
 Open a terminal in the project folder:
 
 ```powershell
-cd C:\Users\YOUR_NAME\Desktop\clothing-remover
+cd C:\Users\YOUR_NAME\Desktop\Remove-background-main
 ```
 
-Create and activate a virtual environment:
+Create a virtual environment:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 ```
 
-Install the backend dependencies:
+Install the backend dependencies with the virtual environment Python:
 
 ```powershell
-pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 ```
 
 The first installation can take a while because it installs PyTorch and image
@@ -51,7 +59,7 @@ processing libraries.
 From the project folder, run:
 
 ```powershell
-python backend\app.py
+.\.venv\Scripts\python.exe backend\app.py
 ```
 
 The Flask server should start at:
@@ -63,6 +71,12 @@ http://127.0.0.1:5000
 The first image extraction may be slow because `fashn-human-parser` downloads
 the model weights from Hugging Face. After that, the model is cached locally.
 
+If the model has already been downloaded manually, it can be stored in:
+
+```text
+backend/models/fashn-human-parser/
+```
+
 ## Run The Frontend
 
 Open this file in a browser:
@@ -71,7 +85,12 @@ Open this file in a browser:
 frontend/index.html
 ```
 
-Then upload a person image and click **Extract Clothes**.
+Then upload a person image and choose one of these actions:
+
+- **Extract Clothes**: returns one transparent PNG containing all detected
+  clothing
+- **Split Into Items**: returns separate item cards for detected garment types
+  such as top, pants, skirt, dress, belt, hat, and scarf
 
 ## API
 
@@ -85,6 +104,27 @@ Response:
 
 - Transparent PNG containing the extracted clothing
 
+### `POST /extract-items`
+
+Form data:
+
+- `file`: image file, such as `.png`, `.jpg`, `.jpeg`, or `.webp`
+
+Response:
+
+- JSON containing separated clothing items with category labels and PNG data
+  URLs
+
+Example categories:
+
+- `top`
+- `pants`
+- `skirt`
+- `dress`
+- `belt`
+- `hat`
+- `scarf`
+
 ### `POST /remove-bg`
 
 This older endpoint removes the background only.
@@ -96,6 +136,9 @@ This older endpoint removes the background only.
 - This project is intended for clothing extraction, fashion organization, and
   electronic wardrobe use cases.
 - It does not generate or infer hidden body content.
+- `Split Into Items` is based on semantic clothing labels. It can help with
+  wardrobe organization, but it may not perfectly separate overlapping garments
+  in every image.
 
 ## Model Credit
 
@@ -106,6 +149,10 @@ https://github.com/fashn-AI/fashn-human-parser
 No paid API key is required. The model runs locally after installation. On the
 first run, the model weights are downloaded automatically from Hugging Face and
 cached on the user's computer.
+
+This project also uses `rembg` for the background-removal endpoint:
+
+https://github.com/danielgatis/rembg
 
 This project is for school project / demo use. If the project is later used for
 commercial purposes, review the model license before deployment.
