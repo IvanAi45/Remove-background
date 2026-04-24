@@ -1,7 +1,19 @@
+import io
+import os
+import sys
+import base64
+from pathlib import Path
+
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from PIL import Image, ImageFilter
-import io
+
+BASE_DIR = Path(__file__).resolve().parent
+LOCAL_PACKAGES_DIR = BASE_DIR / ".packages"
+LOCAL_MODEL_DIR = BASE_DIR / "models" / "fashn-human-parser"
+
+if LOCAL_PACKAGES_DIR.exists():
+    sys.path.insert(0, str(LOCAL_PACKAGES_DIR))
 
 try:
     from rembg import remove
@@ -12,6 +24,19 @@ try:
     from fashn_human_parser import FashnHumanParser
 except ImportError:
     FashnHumanParser = None
+
+try:
+    import numpy as np
+except Exception:
+    np = None
+
+try:
+    import torch
+    from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
+except Exception:
+    torch = None
+    SegformerForSemanticSegmentation = None
+    SegformerImageProcessor = None
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
@@ -24,11 +49,61 @@ CLOTHING_LABEL_IDS = {
     9,  # hat
     10, # scarf
 }
+GARMENT_LABEL_MAP = {
+    'top': {3},
+    'dress': {4},
+    'skirt': {5},
+    'pants': {6},
+    'belt': {7},
+    'hat': {9},
+    'scarf': {10},
+}
+MIN_GARMENT_PIXELS = 500
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
 CORS(app)
-human_parser = FashnHumanParser() if FashnHumanParser else None
+
+
+def create_human_parser_backend():
+    if FashnHumanParser:
+        try:
+            return {
+                'kind': 'package',
+                'parser': FashnHumanParser(),
+            }
+        except Exception:
+            pass
+
+    if (
+        np is not None
+        and torch is not None
+        and SegformerImageProcessor is not None
+        and SegformerForSemanticSegmentation is not None
+        and LOCAL_MODEL_DIR.exists()
+    ):
+        try:
+            processor = SegformerImageProcessor.from_pretrained(
+                str(LOCAL_MODEL_DIR),
+                local_files_only=True,
+            )
+            model = SegformerForSemanticSegmentation.from_pretrained(
+                str(LOCAL_MODEL_DIR),
+                local_files_only=True,
+            )
+            model.eval()
+            return {
+                'kind': 'transformers',
+                'processor': processor,
+                'model': model,
+            }
+        except Exception:
+            pass
+
+    return None
+
+
+human_parser = create_human_parser_backend()
 
 def is_allowed_file(filename):
     return (
@@ -59,6 +134,12 @@ def send_png(image):
     image.save(img_io, format='PNG')
     img_io.seek(0)
     return send_file(img_io, mimetype='image/png')
+
+def image_to_data_url(image):
+    img_io = io.BytesIO()
+    image.save(img_io, format='PNG')
+    encoded = base64.b64encode(img_io.getvalue()).decode('ascii')
+    return f'data:image/png;base64,{encoded}'
 
 def is_likely_skin(r, g, b, a):
     if a == 0:
@@ -355,24 +436,85 @@ def remove_small_disconnected_artifacts(image):
 
     return output
 
-def extract_clothes_with_human_parser(input_image):
+def predict_segmentation_map(input_image):
     if human_parser is None:
         return None
 
-    import numpy as np
-
     rgb_image = input_image.convert('RGB')
-    segmentation = human_parser.predict(rgb_image)
-    clothing_mask = np.isin(segmentation, list(CLOTHING_LABEL_IDS)).astype('uint8') * 255
+    segmentation = None
+
+    if human_parser['kind'] == 'package':
+        segmentation = human_parser['parser'].predict(rgb_image)
+    elif human_parser['kind'] == 'transformers':
+        processor = human_parser['processor']
+        model = human_parser['model']
+        inputs = processor(images=rgb_image, return_tensors='pt')
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits
+            upsampled = torch.nn.functional.interpolate(
+                logits,
+                size=rgb_image.size[::-1],
+                mode='bilinear',
+                align_corners=False,
+            )
+            segmentation = upsampled.argmax(dim=1).squeeze().cpu().numpy()
+
+    if segmentation is None:
+        return None
+
+    return segmentation
+
+def build_mask_from_segmentation(segmentation, label_ids):
+    clothing_mask = np.isin(segmentation, list(label_ids)).astype('uint8') * 255
+    if int(clothing_mask.sum()) == 0:
+        return None
 
     mask = Image.fromarray(clothing_mask, mode='L')
     mask = mask.filter(ImageFilter.MaxFilter(3))
     mask = mask.filter(ImageFilter.MinFilter(3))
     mask = mask.filter(ImageFilter.GaussianBlur(0.6))
+    return mask
 
+def apply_mask_to_image(input_image, mask):
     output = Image.new('RGBA', input_image.size, (0, 0, 0, 0))
     output.paste(input_image.convert('RGBA'), (0, 0), mask)
     return output
+
+def extract_clothes_with_human_parser(input_image):
+    segmentation = predict_segmentation_map(input_image)
+    if segmentation is None:
+        return None
+
+    mask = build_mask_from_segmentation(segmentation, CLOTHING_LABEL_IDS)
+    if mask is None:
+        return None
+
+    return apply_mask_to_image(input_image, mask)
+
+def extract_garment_items(input_image):
+    segmentation = predict_segmentation_map(input_image)
+    if segmentation is None:
+        return None
+
+    items = []
+    for category, label_ids in GARMENT_LABEL_MAP.items():
+        pixel_count = int(np.isin(segmentation, list(label_ids)).sum())
+        if pixel_count < MIN_GARMENT_PIXELS:
+            continue
+
+        mask = build_mask_from_segmentation(segmentation, label_ids)
+        if mask is None:
+            continue
+
+        items.append({
+            'category': category,
+            'pixel_count': pixel_count,
+            'image': image_to_data_url(apply_mask_to_image(input_image, mask)),
+        })
+
+    return items
 
 @app.route('/remove-bg', methods=['POST'])
 def remove_bg():
@@ -407,6 +549,20 @@ def extract_clothes():
     clothing_only = remove_sparse_line_artifacts(clothing_only)
     clothing_only = remove_small_disconnected_artifacts(clothing_only)
     return send_png(clothing_only)
+
+@app.route('/extract-items', methods=['POST'])
+def extract_items():
+    input_image, error = load_uploaded_image()
+    if error:
+        return error
+
+    items = extract_garment_items(input_image)
+    if items is None:
+        return jsonify({
+            'error': 'Garment-level extraction requires the human parser model.',
+        }), 503
+
+    return jsonify({'items': items})
 
 if __name__ == '__main__':
     app.run(debug=True)
