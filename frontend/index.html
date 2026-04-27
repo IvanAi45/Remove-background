@@ -55,9 +55,12 @@
      * @param {File[]} files
      * @returns {FormData}
      */
-    function buildFormData(files) {
+    function buildFormData(files, extraFields = {}) {
       const formData = new FormData();
       files.forEach((file) => formData.append("files", file));
+      Object.entries(extraFields).forEach(([key, value]) => {
+        formData.append(key, value);
+      });
       return formData;
     }
 
@@ -122,7 +125,7 @@
       try {
         const response = await fetch("http://127.0.0.1:5000/extract-item", {
           method: "POST",
-          body: buildFormData([files[0]])
+          body: buildFormData([files[0]], { preview_mode: "high" })
         });
 
         if (!response.ok) {
@@ -165,7 +168,7 @@
       try {
         const response = await fetch("http://127.0.0.1:5000/extract-items", {
           method: "POST",
-          body: buildFormData(files)
+          body: buildFormData(files, { preview_mode: "high" })
         });
 
         if (!response.ok) {
@@ -251,7 +254,38 @@
         card.appendChild(sourceLine);
         card.appendChild(img);
         itemsContainer.appendChild(card);
+
+        if (result.preview_token && result.preview_ready === false) {
+          pollPreviewResult(result.preview_token, img);
+        }
       });
+    }
+
+    /**
+     * Polls backend until high-quality preview is ready and swaps the image.
+     * @param {string} previewToken
+     * @param {HTMLImageElement} imageElement
+     * @returns {Promise<void>}
+     */
+    async function pollPreviewResult(previewToken, imageElement) {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        try {
+          const response = await fetch(`http://127.0.0.1:5000/preview-result/${previewToken}`);
+          if (!response.ok) {
+            return;
+          }
+          const data = await response.json();
+          if (data.ready && data.preview_image) {
+            imageElement.src = data.preview_image;
+            return;
+          }
+        } catch (error) {
+          console.error(error);
+          return;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
     }
   </script>
 </body>
