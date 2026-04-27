@@ -2,27 +2,29 @@ import io
 import os
 import sys
 import base64
+import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from PIL import Image, ImageFilter
 
 BASE_DIR = Path(__file__).resolve().parent
 LOCAL_PACKAGES_DIR = BASE_DIR / ".packages"
 LOCAL_MODEL_DIR = BASE_DIR / "models" / "fashn-human-parser"
+FRONTEND_DIR = BASE_DIR.parent / "frontend"
 
 if LOCAL_PACKAGES_DIR.exists():
     sys.path.insert(0, str(LOCAL_PACKAGES_DIR))
 
 try:
     from rembg import remove
-except Exception:
+except BaseException:
     remove = None
 
 try:
     from fashn_human_parser import FashnHumanParser
-except ImportError:
+except Exception:
     FashnHumanParser = None
 
 try:
@@ -32,14 +34,22 @@ except Exception:
 
 try:
     import torch
-    from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
+    from transformers import (
+        CLIPModel,
+        CLIPProcessor,
+        SegformerForSemanticSegmentation,
+        SegformerImageProcessor,
+    )
 except Exception:
     torch = None
+    CLIPModel = None
+    CLIPProcessor = None
     SegformerForSemanticSegmentation = None
     SegformerImageProcessor = None
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+MAX_INPUT_IMAGE_SIDE = 1024
 CLOTHING_LABEL_IDS = {
     3,  # top
     4,  # dress
@@ -48,6 +58,8 @@ CLOTHING_LABEL_IDS = {
     7,  # belt
     9,  # hat
     10, # scarf
+    18, # shoe (optional parser label)
+    19, # shoe (optional parser label)
 }
 GARMENT_LABEL_MAP = {
     'top': {3},
@@ -59,10 +71,141 @@ GARMENT_LABEL_MAP = {
     'scarf': {10},
 }
 MIN_GARMENT_PIXELS = 500
+SINGLE_ITEM_PIXEL_MIN = 800
+MAX_MAJOR_COMPONENTS = 1
+MAX_SECONDARY_COMPONENT_RATIO = 0.22
+CLIP_MODEL_ID = 'openai/clip-vit-base-patch32'
+SEGMENTATION_CATEGORY_LABELS = {
+    'upper_body': {3, 4},
+    'lower_body': {5, 6},
+    'footwear': {18, 19},
+}
+
+CATEGORY_TAXONOMY = {
+    'upper_body': [
+        't_shirt',
+        'tank_top_vest',
+        'shirt_blouse',
+        'polo_shirt',
+        'hoodie_sweatshirt',
+        'sweater_pullover',
+        'cardigan',
+        'suit_jacket',
+        'jacket',
+        'trench_coat',
+        'overcoat',
+        'down_jacket',
+        'dress',
+    ],
+    'lower_body': [
+        'jeans',
+        'dress_pants',
+        'sweatpants_joggers',
+        'leggings',
+        'casual_shorts',
+        'sports_shorts',
+        'mini_skirt',
+        'maxi_skirt',
+        'pleated_skirt',
+    ],
+    'footwear': [
+        'sneakers',
+        'skate_shoes',
+        'running_shoes',
+        'oxfords',
+        'loafers',
+        'derby_shoes',
+        'ankle_boots',
+        'high_boots',
+        'martin_boots',
+        'sandals',
+        'slippers',
+        'flip_flops',
+    ],
+}
+
+CATEGORY_PROMPTS = {
+    'upper_body': 'a catalog photo of one upper-body clothing item',
+    'lower_body': 'a catalog photo of one lower-body clothing item',
+    'footwear': 'a catalog photo of one footwear item',
+}
+
+SUBCATEGORY_PROMPTS = {
+    't_shirt': 'a catalog photo of one t-shirt',
+    'tank_top_vest': 'a catalog photo of one tank top or vest',
+    'shirt_blouse': 'a catalog photo of one shirt or blouse',
+    'polo_shirt': 'a catalog photo of one polo shirt',
+    'hoodie_sweatshirt': 'a catalog photo of one hoodie or sweatshirt',
+    'sweater_pullover': 'a catalog photo of one sweater or pullover',
+    'cardigan': 'a catalog photo of one cardigan',
+    'suit_jacket': 'a catalog photo of one suit jacket',
+    'jacket': 'a catalog photo of one jacket',
+    'trench_coat': 'a catalog photo of one trench coat',
+    'overcoat': 'a catalog photo of one overcoat',
+    'down_jacket': 'a catalog photo of one down jacket',
+    'dress': 'a catalog photo of one dress',
+    'jeans': 'a catalog photo of one pair of jeans',
+    'dress_pants': 'a catalog photo of one pair of dress pants',
+    'sweatpants_joggers': 'a catalog photo of one pair of sweatpants or joggers',
+    'leggings': 'a catalog photo of one pair of leggings',
+    'casual_shorts': 'a catalog photo of one pair of casual shorts',
+    'sports_shorts': 'a catalog photo of one pair of sports shorts',
+    'mini_skirt': 'a catalog photo of one mini skirt',
+    'maxi_skirt': 'a catalog photo of one maxi skirt',
+    'pleated_skirt': 'a catalog photo of one pleated skirt',
+    'sneakers': 'a catalog photo of one sneaker shoe item',
+    'skate_shoes': 'a catalog photo of one skate shoe item',
+    'running_shoes': 'a catalog photo of one running shoe item',
+    'oxfords': 'a catalog photo of one oxford shoe item',
+    'loafers': 'a catalog photo of one loafer shoe item',
+    'derby_shoes': 'a catalog photo of one derby shoe item',
+    'ankle_boots': 'a catalog photo of one ankle boot item',
+    'high_boots': 'a catalog photo of one high boot item',
+    'martin_boots': 'a catalog photo of one martin boot item',
+    'sandals': 'a catalog photo of one pair of sandals',
+    'slippers': 'a catalog photo of one pair of slippers',
+    'flip_flops': 'a catalog photo of one pair of flip flops',
+}
+SUBCATEGORY_TO_CATEGORY = {
+    subcategory: category
+    for category, subcategories in CATEGORY_TAXONOMY.items()
+    for subcategory in subcategories
+}
+FAST_CLASSIFY_IMAGE_SIDE = 256
+
+clip_classifier = None
+clip_text_feature_cache = {}
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
 CORS(app)
+
+
+@app.route('/', methods=['GET'])
+def home():
+    """
+    Serves the frontend entry page so local testing works on the backend URL.
+    """
+    index_file = FRONTEND_DIR / 'index.html'
+    if index_file.exists():
+        return send_from_directory(str(FRONTEND_DIR), 'index.html')
+
+    return jsonify({
+        'message': 'Clothing API is running.',
+        'hint': 'Open frontend/index.html or restore the frontend folder.',
+    })
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    """
+    Returns a lightweight status payload for connection checks.
+    """
+    return jsonify({
+        'status': 'ok',
+        'human_parser_ready': human_parser is not None,
+        'remove_bg_ready': remove is not None,
+    })
 
 
 def create_human_parser_backend():
@@ -127,7 +270,50 @@ def load_uploaded_image():
     except Exception:
         return None, (jsonify({'error': 'Uploaded file is not a valid image.'}), 400)
 
-    return image, None
+    return normalize_input_image_size(image), None
+
+def load_uploaded_images():
+    """
+    Loads single or multiple uploaded files and validates them as images.
+    """
+    raw_files = []
+    if 'files' in request.files:
+        raw_files = request.files.getlist('files')
+    elif 'file' in request.files:
+        raw_files = [request.files['file']]
+
+    if not raw_files:
+        return None, (jsonify({'error': 'Missing image file field named "file" or "files".'}), 400)
+
+    images = []
+    for file in raw_files:
+        if not file or file.filename == '':
+            return None, (jsonify({'error': 'One selected file is empty.'}), 400)
+        if not is_allowed_file(file.filename):
+            return None, (jsonify({'error': f'Unsupported image type: {file.filename}'}), 400)
+
+        try:
+            image = Image.open(file.stream).convert('RGBA')
+        except Exception:
+            return None, (jsonify({'error': f'Invalid image file: {file.filename}'}), 400)
+
+        images.append({
+            'filename': file.filename,
+            'image': normalize_input_image_size(image),
+        })
+
+    return images, None
+
+def normalize_input_image_size(image):
+    """
+    Limits oversized input images to speed up model inference.
+    """
+    normalized = image.convert('RGBA')
+    if max(normalized.size) <= MAX_INPUT_IMAGE_SIDE:
+        return normalized
+
+    normalized.thumbnail((MAX_INPUT_IMAGE_SIDE, MAX_INPUT_IMAGE_SIDE))
+    return normalized
 
 def send_png(image):
     img_io = io.BytesIO()
@@ -135,11 +321,161 @@ def send_png(image):
     img_io.seek(0)
     return send_file(img_io, mimetype='image/png')
 
-def image_to_data_url(image):
+def image_to_data_url(image, max_side=320):
+    if max_side and max(image.size) > max_side:
+        image = image.copy()
+        image.thumbnail((max_side, max_side))
+
     img_io = io.BytesIO()
     image.save(img_io, format='PNG')
     encoded = base64.b64encode(img_io.getvalue()).decode('ascii')
     return f'data:image/png;base64,{encoded}'
+
+def create_clip_classifier():
+    if torch is None or CLIPModel is None or CLIPProcessor is None:
+        return None
+
+    try:
+        processor = CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
+        model = CLIPModel.from_pretrained(CLIP_MODEL_ID)
+        model.eval()
+        return {
+            'processor': processor,
+            'model': model,
+        }
+    except Exception:
+        return None
+
+def get_clip_classifier():
+    global clip_classifier
+    if clip_classifier is None:
+        clip_classifier = create_clip_classifier()
+    return clip_classifier
+
+def get_clip_text_features(labels_to_prompts):
+    """
+    Caches CLIP text features to avoid repeated prompt encoding.
+    """
+    classifier = get_clip_classifier()
+    if classifier is None:
+        return None, None
+
+    labels = list(labels_to_prompts.keys())
+    prompts = tuple(labels_to_prompts[label] for label in labels)
+    cache_key = '|'.join(prompts)
+    if cache_key in clip_text_feature_cache:
+        return labels, clip_text_feature_cache[cache_key]
+
+    processor = classifier['processor']
+    model = classifier['model']
+    text_inputs = processor(
+        text=list(prompts),
+        return_tensors='pt',
+        padding=True,
+    )
+    with torch.no_grad():
+        text_features = model.get_text_features(
+            input_ids=text_inputs['input_ids'],
+            attention_mask=text_inputs['attention_mask'],
+        )
+        if hasattr(text_features, 'pooler_output'):
+            text_features = text_features.pooler_output
+        elif hasattr(text_features, 'last_hidden_state'):
+            text_features = text_features.last_hidden_state[:, 0, :]
+        text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
+
+    clip_text_feature_cache[cache_key] = text_features
+    return labels, text_features
+
+def rank_labels_with_clip_batch(images, labels_to_prompts):
+    """
+    Runs one CLIP image forward pass for a whole image batch.
+    """
+    classifier = get_clip_classifier()
+    if classifier is None:
+        return None
+
+    labels, text_features = get_clip_text_features(labels_to_prompts)
+    if labels is None or text_features is None:
+        return None
+
+    try:
+        processor = classifier['processor']
+        model = classifier['model']
+        resized_images = [image.convert('RGB').resize((224, 224)) for image in images]
+        image_inputs = processor(images=resized_images, return_tensors='pt')
+
+        with torch.no_grad():
+            image_features = model.get_image_features(pixel_values=image_inputs['pixel_values'])
+            if hasattr(image_features, 'pooler_output'):
+                image_features = image_features.pooler_output
+            elif hasattr(image_features, 'last_hidden_state'):
+                image_features = image_features.last_hidden_state[:, 0, :]
+            image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
+            logits = image_features @ text_features.T
+            probabilities = logits.softmax(dim=1).cpu().tolist()
+    except Exception:
+        return None
+
+    return [
+        list(zip(labels, row_probs))
+        for row_probs in probabilities
+    ]
+
+def build_fast_item_crop(input_image):
+    """
+    Fast crop for product photos: trims near-white background if possible.
+    """
+    image = input_image.convert('RGBA').copy()
+    image.thumbnail((FAST_CLASSIFY_IMAGE_SIDE, FAST_CLASSIFY_IMAGE_SIDE))
+
+    if np is None:
+        return image
+
+    rgb = np.array(image.convert('RGB'))
+    mask = np.any(rgb < 245, axis=2)
+    if int(mask.sum()) < 200:
+        return image
+
+    coords = np.argwhere(mask)
+    min_y, min_x = coords.min(axis=0)
+    max_y, max_x = coords.max(axis=0)
+    if max_x <= min_x or max_y <= min_y:
+        return image
+
+    return image.crop((int(min_x), int(min_y), int(max_x) + 1, int(max_y) + 1))
+
+def classify_images_fast(uploaded_images):
+    """
+    Classifies many images with one CLIP batch call for speed.
+    """
+    if torch is None or CLIPModel is None or CLIPProcessor is None:
+        return None, 'CLIP classification model is unavailable.'
+
+    crops = [build_fast_item_crop(item['image']) for item in uploaded_images]
+    ranked_rows = rank_labels_with_clip_batch(crops, SUBCATEGORY_PROMPTS)
+    if not ranked_rows:
+        return None, 'CLIP classification model is unavailable.'
+
+    results = []
+    for uploaded, crop, ranked in zip(uploaded_images, crops, ranked_rows):
+        ranked.sort(key=lambda result: result[1], reverse=True)
+        top_subcategory, top_confidence = ranked[0]
+        top_category = SUBCATEGORY_TO_CATEGORY[top_subcategory]
+
+        results.append({
+            'filename': uploaded['filename'],
+            'ok': True,
+            'category': top_category,
+            'subcategory': top_subcategory,
+            'category_confidence': round(float(top_confidence), 4),
+            'subcategory_confidence': round(float(top_confidence), 4),
+            'category_source': 'clip_fast',
+            'all_categories': CATEGORY_TAXONOMY,
+            'preview_image': image_to_data_url(crop, max_side=320),
+        })
+
+    return results, None
 
 def is_likely_skin(r, g, b, a):
     if a == 0:
@@ -482,6 +818,314 @@ def apply_mask_to_image(input_image, mask):
     output.paste(input_image.convert('RGBA'), (0, 0), mask)
     return output
 
+def get_alpha_connected_components(alpha_mask):
+    height, width = alpha_mask.shape
+    visited = np.zeros_like(alpha_mask, dtype=bool)
+    components = []
+
+    for y in range(height):
+        for x in range(width):
+            if visited[y, x] or alpha_mask[y, x] == 0:
+                visited[y, x] = True
+                continue
+
+            stack = [(x, y)]
+            visited[y, x] = True
+            count = 0
+
+            while stack:
+                current_x, current_y = stack.pop()
+                count += 1
+                for next_x, next_y in (
+                    (current_x - 1, current_y),
+                    (current_x + 1, current_y),
+                    (current_x, current_y - 1),
+                    (current_x, current_y + 1),
+                ):
+                    if (
+                        next_x < 0
+                        or next_y < 0
+                        or next_x >= width
+                        or next_y >= height
+                        or visited[next_y, next_x]
+                    ):
+                        continue
+
+                    visited[next_y, next_x] = True
+                    if alpha_mask[next_y, next_x] > 0:
+                        stack.append((next_x, next_y))
+
+            components.append(count)
+
+    return sorted(components, reverse=True)
+
+def build_single_item_crop(input_image):
+    segmentation = predict_segmentation_map(input_image)
+    masked_image = None
+
+    if segmentation is not None:
+        mask = build_mask_from_segmentation(segmentation, CLOTHING_LABEL_IDS)
+        if mask is not None:
+            masked_image = apply_mask_to_image(input_image, mask)
+
+    if masked_image is None:
+        if remove is None:
+            return None, 'Segmentation and background removal are unavailable.', segmentation
+        masked_image = remove(input_image).convert('RGBA')
+
+    alpha = np.array(masked_image.getchannel('A'))
+    total_pixels = int((alpha > 0).sum())
+    if total_pixels < SINGLE_ITEM_PIXEL_MIN:
+        return None, 'No valid single clothing item was detected.', segmentation
+
+    components = get_alpha_connected_components(alpha)
+    if not components:
+        return None, 'No valid single clothing item was detected.', segmentation
+
+    major_count = components[0]
+    secondary_count = components[1] if len(components) > 1 else 0
+    secondary_ratio = secondary_count / major_count if major_count > 0 else 0
+    major_components = [count for count in components if count >= SINGLE_ITEM_PIXEL_MIN]
+
+    if (
+        len(major_components) > MAX_MAJOR_COMPONENTS
+        or secondary_ratio > MAX_SECONDARY_COMPONENT_RATIO
+    ):
+        return None, 'Only one clothing item is allowed per upload.', segmentation
+
+    bbox = masked_image.getbbox()
+    if bbox is None:
+        return None, 'No valid single clothing item was detected.', segmentation
+
+    return masked_image.crop(bbox), None, segmentation
+
+def rank_labels_with_clip(image, labels_to_prompts):
+    classifier = get_clip_classifier()
+    if classifier is None:
+        return None
+
+    processor = classifier['processor']
+    model = classifier['model']
+    try:
+        labels, text_features = get_clip_text_features(labels_to_prompts)
+        if labels is None or text_features is None:
+            return None
+
+        resized_image = image.convert('RGB').resize((224, 224))
+        image_inputs = processor(
+            images=resized_image,
+            return_tensors='pt',
+        )
+
+        with torch.no_grad():
+            image_features = model.get_image_features(pixel_values=image_inputs['pixel_values'])
+            if hasattr(image_features, 'pooler_output'):
+                image_features = image_features.pooler_output
+            elif hasattr(image_features, 'last_hidden_state'):
+                image_features = image_features.last_hidden_state[:, 0, :]
+            image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
+            logits = image_features @ text_features.T
+            probabilities = logits.softmax(dim=1).cpu().tolist()[0]
+    except Exception:
+        return None
+
+    return list(zip(labels, probabilities))
+
+def infer_major_category_from_segmentation(segmentation):
+    """
+    Uses parser labels as first-pass major category detection.
+    """
+    if segmentation is None or np is None:
+        return None, 0.0
+
+    total_pixels = int(segmentation.size)
+    if total_pixels == 0:
+        return None, 0.0
+
+    category_scores = {}
+    for category, label_set in SEGMENTATION_CATEGORY_LABELS.items():
+        score = int(np.isin(segmentation, list(label_set)).sum())
+        category_scores[category] = score
+
+    top_category = max(category_scores, key=category_scores.get)
+    top_pixels = category_scores[top_category]
+    if top_pixels < SINGLE_ITEM_PIXEL_MIN:
+        return None, 0.0
+
+    confidence = float(top_pixels) / float(total_pixels)
+    return top_category, confidence
+
+def infer_lower_body_subcategory(segmentation, item_crop):
+    """
+    Improves lower-body accuracy using segmentation labels + silhouette ratio.
+    """
+    width, height = item_crop.size
+    aspect_ratio = (height / width) if width > 0 else 0.0
+    if segmentation is None:
+        segmentation = np.zeros((1, 1), dtype=np.uint8)
+
+    skirt_pixels = int(np.isin(segmentation, [5]).sum())
+    pants_pixels = int(np.isin(segmentation, [6]).sum())
+
+    if skirt_pixels > pants_pixels:
+        if aspect_ratio < 0.95:
+            return 'mini_skirt'
+        if aspect_ratio > 1.2:
+            return 'maxi_skirt'
+        return 'pleated_skirt'
+
+    if aspect_ratio < 1.0:
+        lower_clip = rank_labels_with_clip(item_crop, {
+            'casual_shorts': SUBCATEGORY_PROMPTS['casual_shorts'],
+            'sports_shorts': SUBCATEGORY_PROMPTS['sports_shorts'],
+        })
+        if not lower_clip:
+            return 'casual_shorts'
+        lower_clip.sort(key=lambda result: result[1], reverse=True)
+        return lower_clip[0][0]
+
+    if aspect_ratio > 1.75:
+        return 'leggings'
+
+    lower_clip = rank_labels_with_clip(item_crop, {
+        'jeans': SUBCATEGORY_PROMPTS['jeans'],
+        'dress_pants': SUBCATEGORY_PROMPTS['dress_pants'],
+        'sweatpants_joggers': SUBCATEGORY_PROMPTS['sweatpants_joggers'],
+        'leggings': SUBCATEGORY_PROMPTS['leggings'],
+    })
+    if not lower_clip:
+        return 'dress_pants'
+    lower_clip.sort(key=lambda result: result[1], reverse=True)
+    return lower_clip[0][0]
+
+def infer_upper_body_subcategory(segmentation, item_crop):
+    """
+    Uses parser labels first, then a reduced CLIP label set for speed.
+    """
+    width, height = item_crop.size
+    aspect_ratio = (height / width) if width > 0 else 0.0
+    if segmentation is not None:
+        dress_pixels = int(np.isin(segmentation, [4]).sum())
+        upper_pixels = int(np.isin(segmentation, [3]).sum())
+        if dress_pixels > upper_pixels:
+            return 'dress', 0.9
+
+    if aspect_ratio > 1.55:
+        shortlist = {
+            'trench_coat': SUBCATEGORY_PROMPTS['trench_coat'],
+            'overcoat': SUBCATEGORY_PROMPTS['overcoat'],
+            'down_jacket': SUBCATEGORY_PROMPTS['down_jacket'],
+            'dress': SUBCATEGORY_PROMPTS['dress'],
+        }
+    elif aspect_ratio > 1.15:
+        shortlist = {
+            'hoodie_sweatshirt': SUBCATEGORY_PROMPTS['hoodie_sweatshirt'],
+            'sweater_pullover': SUBCATEGORY_PROMPTS['sweater_pullover'],
+            'cardigan': SUBCATEGORY_PROMPTS['cardigan'],
+            'jacket': SUBCATEGORY_PROMPTS['jacket'],
+            'suit_jacket': SUBCATEGORY_PROMPTS['suit_jacket'],
+        }
+    else:
+        shortlist = {
+            't_shirt': SUBCATEGORY_PROMPTS['t_shirt'],
+            'tank_top_vest': SUBCATEGORY_PROMPTS['tank_top_vest'],
+            'shirt_blouse': SUBCATEGORY_PROMPTS['shirt_blouse'],
+            'polo_shirt': SUBCATEGORY_PROMPTS['polo_shirt'],
+        }
+
+    upper_rank = rank_labels_with_clip(item_crop, shortlist)
+    if not upper_rank:
+        fallback = next(iter(shortlist.keys()))
+        return fallback, 0.55
+    upper_rank.sort(key=lambda result: result[1], reverse=True)
+    return upper_rank[0][0], upper_rank[0][1]
+
+def infer_footwear_subcategory(item_crop):
+    """
+    Uses compact footwear candidate groups to reduce CLIP calls.
+    """
+    width, height = item_crop.size
+    aspect_ratio = (height / width) if width > 0 else 0.0
+
+    if aspect_ratio < 0.55:
+        shortlist = {
+            'sandals': SUBCATEGORY_PROMPTS['sandals'],
+            'slippers': SUBCATEGORY_PROMPTS['slippers'],
+            'flip_flops': SUBCATEGORY_PROMPTS['flip_flops'],
+        }
+    elif aspect_ratio > 1.05:
+        shortlist = {
+            'ankle_boots': SUBCATEGORY_PROMPTS['ankle_boots'],
+            'high_boots': SUBCATEGORY_PROMPTS['high_boots'],
+            'martin_boots': SUBCATEGORY_PROMPTS['martin_boots'],
+        }
+    else:
+        shortlist = {
+            'sneakers': SUBCATEGORY_PROMPTS['sneakers'],
+            'skate_shoes': SUBCATEGORY_PROMPTS['skate_shoes'],
+            'running_shoes': SUBCATEGORY_PROMPTS['running_shoes'],
+            'oxfords': SUBCATEGORY_PROMPTS['oxfords'],
+            'loafers': SUBCATEGORY_PROMPTS['loafers'],
+            'derby_shoes': SUBCATEGORY_PROMPTS['derby_shoes'],
+        }
+
+    footwear_rank = rank_labels_with_clip(item_crop, shortlist)
+    if not footwear_rank:
+        fallback = next(iter(shortlist.keys()))
+        return fallback, 0.55
+    footwear_rank.sort(key=lambda result: result[1], reverse=True)
+    return footwear_rank[0][0], footwear_rank[0][1]
+
+def classify_single_item(input_image):
+    if np is None:
+        return None, 'NumPy is unavailable for single-item validation.'
+
+    item_crop, crop_error, segmentation = build_single_item_crop(input_image)
+    if crop_error:
+        return None, crop_error
+
+    seg_category, seg_confidence = infer_major_category_from_segmentation(segmentation)
+    top_category = seg_category
+    category_confidence = seg_confidence
+    source = 'segmentation'
+
+    if top_category is None:
+        category_rank = rank_labels_with_clip(item_crop, CATEGORY_PROMPTS)
+        if not category_rank:
+            return None, 'CLIP classification model is unavailable.'
+        category_rank.sort(key=lambda result: result[1], reverse=True)
+        top_category, category_confidence = category_rank[0]
+        source = 'clip'
+
+    if top_category == 'lower_body':
+        top_subcategory = infer_lower_body_subcategory(segmentation, item_crop)
+        subcategory_confidence = 0.75
+    elif top_category == 'upper_body':
+        top_subcategory, subcategory_confidence = infer_upper_body_subcategory(segmentation, item_crop)
+    elif top_category == 'footwear':
+        top_subcategory, subcategory_confidence = infer_footwear_subcategory(item_crop)
+    else:
+        subcategories = CATEGORY_TAXONOMY[top_category]
+        subcategory_prompt_map = {
+            subcategory: SUBCATEGORY_PROMPTS[subcategory]
+            for subcategory in subcategories
+        }
+        subcategory_rank = rank_labels_with_clip(item_crop, subcategory_prompt_map)
+        if not subcategory_rank:
+            return None, 'CLIP classification model is unavailable.'
+        subcategory_rank.sort(key=lambda result: result[1], reverse=True)
+        top_subcategory, subcategory_confidence = subcategory_rank[0]
+
+    return {
+        'category': top_category,
+        'category_confidence': round(float(category_confidence), 4),
+        'subcategory': top_subcategory,
+        'subcategory_confidence': round(float(subcategory_confidence), 4),
+        'category_source': source,
+        'all_categories': CATEGORY_TAXONOMY,
+        'preview_image': image_to_data_url(item_crop, max_side=320),
+    }, None
+
 def extract_clothes_with_human_parser(input_image):
     segmentation = predict_segmentation_map(input_image)
     if segmentation is None:
@@ -552,17 +1196,47 @@ def extract_clothes():
 
 @app.route('/extract-items', methods=['POST'])
 def extract_items():
+    started_at = time.perf_counter()
+    uploaded_images, error = load_uploaded_images()
+    if error:
+        return error
+
+    results, classify_error = classify_images_fast(uploaded_images)
+    if classify_error:
+        return jsonify({'error': classify_error}), 503
+
+    return jsonify({
+        'results': results,
+        'total': len(results),
+        'failed': 0,
+        'success': len(results),
+        'has_error': False,
+        'processing_ms': int((time.perf_counter() - started_at) * 1000),
+        'all_categories': CATEGORY_TAXONOMY,
+    })
+
+@app.route('/extract-item', methods=['POST'])
+def extract_item():
+    """
+    Classifies one single uploaded clothing image.
+    """
+    started_at = time.perf_counter()
     input_image, error = load_uploaded_image()
     if error:
         return error
 
-    items = extract_garment_items(input_image)
-    if items is None:
-        return jsonify({
-            'error': 'Garment-level extraction requires the human parser model.',
-        }), 503
+    results, classify_error = classify_images_fast([{
+        'filename': 'single_upload',
+        'image': input_image,
+    }])
+    if classify_error or not results:
+        return jsonify({'error': classify_error or 'Failed to classify image.'}), 503
 
-    return jsonify({'items': items})
+    return jsonify({
+        'ok': True,
+        **results[0],
+        'processing_ms': int((time.perf_counter() - started_at) * 1000),
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)

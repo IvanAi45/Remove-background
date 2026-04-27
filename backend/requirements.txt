@@ -3,3 +3,6 @@ flask-cors
 rembg[cpu]
 Pillow
 fashn-human-parser
+numpy
+torch
+transformers

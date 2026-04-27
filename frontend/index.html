@@ -7,11 +7,12 @@
 </head>
 <body>
   <h2>Extract Clothes From an Image</h2>
-  <p>This tool can keep all clothing pixels together, or split garments like tops and pants into separate wardrobe items.</p>
+  <p>This tool can keep all clothing pixels together, or classify one single clothing item into upper body, lower body, or footwear subcategories.</p>
 
-  <input type="file" id="fileInput" accept="image/*" />
+  <input type="file" id="fileInput" accept="image/*" multiple />
   <button onclick="uploadImage()">Extract Clothes</button>
-  <button onclick="extractItems()">Split Into Items</button>
+  <button onclick="classifySingleImage()">Classify Single Image</button>
+  <button onclick="classifyBatchImages()">Classify Batch Images</button>
 
   <h3>Result:</h3>
   <div style="
@@ -24,7 +25,7 @@
     <img id="resultImage" style="max-width: 300px; display: block;" />
   </div>
 
-  <h3>Separated Items:</h3>
+  <h3>Classification Result:</h3>
   <div id="itemsContainer" style="
     display: flex;
     flex-wrap: wrap;
@@ -33,39 +34,59 @@
   "></div>
 
   <script>
-    function getSelectedFile() {
+    /**
+     * Returns the currently selected upload files.
+     * @returns {File[]}
+     */
+    function getSelectedFiles() {
       const fileInput = document.getElementById("fileInput");
-      const file = fileInput.files[0];
+      const files = Array.from(fileInput.files || []);
 
-      if (!file) {
-        alert("Please select an image first.");
-        return null;
+      if (files.length === 0) {
+        alert("Please select at least one image.");
+        return [];
       }
 
-      return file;
+      return files;
     }
 
-    function buildFormData(file) {
+    /**
+     * Creates a multipart form payload for image upload.
+     * @param {File[]} files
+     * @returns {FormData}
+     */
+    function buildFormData(files) {
       const formData = new FormData();
-      formData.append("file", file);
+      files.forEach((file) => formData.append("files", file));
       return formData;
     }
 
+    /**
+     * Clears all classification cards from the result area.
+     * @returns {void}
+     */
     function resetSplitResults() {
       document.getElementById("itemsContainer").innerHTML = "";
     }
 
+    /**
+     * Sends image to the extract endpoint and renders PNG output.
+     * @returns {Promise<void>}
+     */
     async function uploadImage() {
-      const file = getSelectedFile();
-      if (!file) {
+      const files = getSelectedFiles();
+      if (files.length === 0) {
         return;
+      }
+      if (files.length > 1) {
+        alert("Extract Clothes currently supports one image at a time. The first selected image will be used.");
       }
       resetSplitResults();
 
       try {
         const response = await fetch("http://127.0.0.1:5000/extract-clothes", {
           method: "POST",
-          body: buildFormData(file)
+          body: buildFormData([files[0]])
         });
 
         if (!response.ok) {
@@ -83,9 +104,59 @@
       }
     }
 
-    async function extractItems() {
-      const file = getSelectedFile();
-      if (!file) {
+    /**
+     * Sends one clothing item image for hierarchical classification.
+     * @returns {Promise<void>}
+     */
+    async function classifySingleImage() {
+      const files = getSelectedFiles();
+      if (files.length === 0) {
+        return;
+      }
+      if (files.length > 1) {
+        alert("Single-image mode uses only the first selected image.");
+      }
+
+      document.getElementById("resultImage").src = "";
+
+      try {
+        const response = await fetch("http://127.0.0.1:5000/extract-item", {
+          method: "POST",
+          body: buildFormData([files[0]])
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          alert(error?.error || "Failed to classify item.");
+          return;
+        }
+
+        const data = await response.json();
+        const itemsContainer = document.getElementById("itemsContainer");
+        itemsContainer.innerHTML = "";
+
+        if (!data.ok) {
+          itemsContainer.innerHTML = "<p>No valid analysis result was returned.</p>";
+          return;
+        }
+
+        renderResultCards([{ ...data, filename: files[0].name }]);
+        if (typeof data.processing_ms === "number") {
+          console.log(`Single image processed in ${data.processing_ms} ms`);
+        }
+      } catch (error) {
+        console.error(error);
+        alert("Something went wrong.");
+      }
+    }
+
+    /**
+     * Sends multiple images for batch clothing classification.
+     * @returns {Promise<void>}
+     */
+    async function classifyBatchImages() {
+      const files = getSelectedFiles();
+      if (files.length === 0) {
         return;
       }
 
@@ -94,51 +165,93 @@
       try {
         const response = await fetch("http://127.0.0.1:5000/extract-items", {
           method: "POST",
-          body: buildFormData(file)
+          body: buildFormData(files)
         });
 
         if (!response.ok) {
           const error = await response.json().catch(() => null);
-          alert(error?.error || "Failed to split items.");
+          alert(error?.error || "Failed to classify batch items.");
           return;
         }
 
         const data = await response.json();
-        const itemsContainer = document.getElementById("itemsContainer");
-        itemsContainer.innerHTML = "";
-
-        if (!data.items || data.items.length === 0) {
-          itemsContainer.innerHTML = "<p>No separate garments were detected.</p>";
+        if (!data.results || data.results.length === 0) {
+          document.getElementById("itemsContainer").innerHTML = "<p>No valid analysis result was returned.</p>";
           return;
         }
 
-        data.items.forEach((item) => {
-          const card = document.createElement("div");
-          card.style.cssText = `
-            width: 220px;
-            padding: 16px;
-            border-radius: 18px;
-            background: linear-gradient(145deg, #fbf7ef, #eee5d8);
-            box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
-          `;
-
-          const title = document.createElement("h4");
-          title.textContent = item.category;
-          title.style.margin = "0 0 12px 0";
-
-          const img = document.createElement("img");
-          img.src = item.image;
-          img.style.maxWidth = "100%";
-          img.style.display = "block";
-
-          card.appendChild(title);
-          card.appendChild(img);
-          itemsContainer.appendChild(card);
-        });
+        renderResultCards(data.results);
+        if (typeof data.processing_ms === "number") {
+          console.log(`Batch processed in ${data.processing_ms} ms`);
+        }
       } catch (error) {
         console.error(error);
         alert("Something went wrong.");
       }
+    }
+
+    /**
+     * Renders classification cards for one or many images.
+     * @param {Array<Object>} results
+     * @returns {void}
+     */
+    function renderResultCards(results) {
+      const itemsContainer = document.getElementById("itemsContainer");
+      itemsContainer.innerHTML = "";
+
+      results.forEach((result) => {
+        const card = document.createElement("div");
+        card.style.cssText = `
+          width: 300px;
+          padding: 16px;
+          border-radius: 18px;
+          background: linear-gradient(145deg, #fbf7ef, #eee5d8);
+          box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
+        `;
+
+        const filename = document.createElement("h4");
+        filename.textContent = result.filename || "Unnamed file";
+        filename.style.margin = "0 0 8px 0";
+        card.appendChild(filename);
+
+        if (!result.ok) {
+          const errorLine = document.createElement("p");
+          errorLine.textContent = `Error: ${result.error || "Unknown failure"}`;
+          errorLine.style.margin = "0";
+          errorLine.style.color = "#9b1c1c";
+          card.appendChild(errorLine);
+          itemsContainer.appendChild(card);
+          return;
+        }
+
+        const title = document.createElement("p");
+        title.textContent = `Category: ${result.category}`;
+        title.style.margin = "0 0 6px 0";
+
+        const subTitle = document.createElement("p");
+        subTitle.textContent = `Subcategory: ${result.subcategory}`;
+        subTitle.style.margin = "0 0 6px 0";
+
+        const scoreLine = document.createElement("p");
+        scoreLine.textContent = `Confidence: ${result.subcategory_confidence}`;
+        scoreLine.style.margin = "0 0 6px 0";
+
+        const sourceLine = document.createElement("p");
+        sourceLine.textContent = `Category source: ${result.category_source}`;
+        sourceLine.style.margin = "0 0 12px 0";
+
+        const img = document.createElement("img");
+        img.src = result.preview_image;
+        img.style.maxWidth = "100%";
+        img.style.display = "block";
+
+        card.appendChild(title);
+        card.appendChild(subTitle);
+        card.appendChild(scoreLine);
+        card.appendChild(sourceLine);
+        card.appendChild(img);
+        itemsContainer.appendChild(card);
+      });
     }
   </script>
 </body>

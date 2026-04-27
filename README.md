@@ -8,8 +8,8 @@ non-clothing body parts.
 The app currently supports two output styles:
 
 - `Extract Clothes`: keeps all detected clothing in one transparent PNG
-- `Split Into Items`: tries to separate garments such as tops, pants, skirts,
-  dresses, belts, hats, and scarves into individual item cards
+- `Classify Single Item`: validates one uploaded clothing item and classifies it
+  into upper body, lower body, or footwear with a detailed subtype
 
 ## Project Structure
 
@@ -85,12 +85,12 @@ Open this file in a browser:
 frontend/index.html
 ```
 
-Then upload a person image and choose one of these actions:
+Then upload an image and choose one of these actions:
 
 - **Extract Clothes**: returns one transparent PNG containing all detected
   clothing
-- **Split Into Items**: returns separate item cards for detected garment types
-  such as top, pants, skirt, dress, belt, hat, and scarf
+- **Classify Single Item**: accepts only one clothing item per upload and returns
+  category + subtype classification result
 
 ## API
 
@@ -108,22 +108,70 @@ Response:
 
 Form data:
 
-- `file`: image file, such as `.png`, `.jpg`, `.jpeg`, or `.webp`
+- `files`: one or more image files, such as `.png`, `.jpg`, `.jpeg`, or `.webp`
+- `file`: still supported for backward compatibility (single-image upload)
 
 Response:
 
-- JSON containing separated clothing items with category labels and PNG data
-  URLs
+- JSON containing batch results:
+  - `results`: per-image analysis array
+  - each item includes `filename`, `ok`, and either `error` or classification data
+  - summary fields: `total`, `success`, `failed`, `has_error`
+  - classification fields include `category`, `subcategory`, confidences, and `preview_image`
 
-Example categories:
+### `POST /extract-item`
 
-- `top`
-- `pants`
-- `skirt`
+Form data:
+
+- `file`: one image file
+
+Response:
+
+- JSON for one file classification result with `category`, `subcategory`,
+  confidences, and `preview_image`
+
+Upper body subcategories:
+
+- `t_shirt`
+- `tank_top_vest`
+- `shirt_blouse`
+- `polo_shirt`
+- `hoodie_sweatshirt`
+- `sweater_pullover`
+- `cardigan`
+- `suit_jacket`
+- `jacket`
+- `trench_coat`
+- `overcoat`
+- `down_jacket`
 - `dress`
-- `belt`
-- `hat`
-- `scarf`
+
+Lower body subcategories:
+
+- `jeans`
+- `dress_pants`
+- `sweatpants_joggers`
+- `leggings`
+- `casual_shorts`
+- `sports_shorts`
+- `mini_skirt`
+- `maxi_skirt`
+- `pleated_skirt`
+
+Footwear subcategories:
+
+- `sneakers`
+- `skate_shoes`
+- `running_shoes`
+- `oxfords`
+- `loafers`
+- `derby_shoes`
+- `ankle_boots`
+- `high_boots`
+- `martin_boots`
+- `sandals`
+- `slippers`
+- `flip_flops`
 
 ### `POST /remove-bg`
 
@@ -136,9 +184,9 @@ This older endpoint removes the background only.
 - This project is intended for clothing extraction, fashion organization, and
   electronic wardrobe use cases.
 - It does not generate or infer hidden body content.
-- `Split Into Items` is based on semantic clothing labels. It can help with
-  wardrobe organization, but it may not perfectly separate overlapping garments
-  in every image.
+- `Classify Single Item` requires exactly one major clothing item in the image.
+- Classification uses a zero-shot CLIP classifier; quality depends on image
+  clarity, camera angle, and whether the garment occupies most of the frame.
 
 ## Model Credit
 
