@@ -18,9 +18,10 @@ if LOCAL_PACKAGES_DIR.exists():
     sys.path.insert(0, str(LOCAL_PACKAGES_DIR))
 
 try:
-    from rembg import remove
+    from rembg import remove, new_session
 except BaseException:
     remove = None
+    new_session = None
 
 try:
     from fashn_human_parser import FashnHumanParser
@@ -180,6 +181,7 @@ FAST_CLASSIFY_IMAGE_SIDE = 256
 
 clip_classifier = None
 clip_text_feature_cache = {}
+rembg_session = None
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
@@ -357,6 +359,22 @@ def get_clip_classifier():
         clip_classifier = create_clip_classifier()
     return clip_classifier
 
+def get_rembg_session():
+    """
+    Lazily creates one reusable rembg session for faster multi-image processing.
+    """
+    global rembg_session
+    if rembg_session is not None:
+        return rembg_session
+    if remove is None or new_session is None:
+        return None
+
+    try:
+        rembg_session = new_session()
+    except Exception:
+        rembg_session = None
+    return rembg_session
+
 def get_clip_text_features(labels_to_prompts):
     """
     Caches CLIP text features to avoid repeated prompt encoding.
@@ -511,11 +529,12 @@ def build_fast_transparent_preview(crop_image, predicted_category=None):
     2) lightweight GrabCut fallback
     """
     image = crop_image.convert('RGBA').copy()
-    image.thumbnail((384, 384))
+    image.thumbnail((320, 320))
 
     if remove is not None:
         try:
-            removed = remove(image)
+            session = get_rembg_session()
+            removed = remove(image, session=session) if session is not None else remove(image)
             if isinstance(removed, Image.Image):
                 return crop_to_alpha_bounds(removed.convert('RGBA'))
             decoded = Image.open(io.BytesIO(removed)).convert('RGBA')
