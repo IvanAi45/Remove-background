@@ -6,24 +6,11 @@
   <title>Clothing Extractor</title>
 </head>
 <body>
-  <h2>Extract Clothes From an Image</h2>
-  <p>This tool can keep all clothing pixels together, or classify one single clothing item into upper body, lower body, or footwear subcategories.</p>
+  <h2>Classify Clothing Images</h2>
+  <p>This tool classifies uploaded clothing images into upper body, lower body, or footwear subcategories.</p>
 
   <input type="file" id="fileInput" accept="image/*" multiple />
-  <button onclick="uploadImage()">Extract Clothes</button>
-  <button onclick="classifySingleImage()">Classify Single Image</button>
   <button onclick="classifyBatchImages()">Classify Batch Images</button>
-
-  <h3>Result:</h3>
-  <div style="
-    display: inline-block;
-    padding: 18px;
-    border-radius: 18px;
-    background: linear-gradient(145deg, #fbf7ef, #eee5d8);
-    box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
-  ">
-    <img id="resultImage" style="max-width: 300px; display: block;" />
-  </div>
 
   <h3>Classification Result:</h3>
   <div id="itemsContainer" style="
@@ -73,87 +60,6 @@
     }
 
     /**
-     * Sends image to the extract endpoint and renders PNG output.
-     * @returns {Promise<void>}
-     */
-    async function uploadImage() {
-      const files = getSelectedFiles();
-      if (files.length === 0) {
-        return;
-      }
-      if (files.length > 1) {
-        alert("Extract Clothes currently supports one image at a time. The first selected image will be used.");
-      }
-      resetSplitResults();
-
-      try {
-        const response = await fetch("http://127.0.0.1:5000/extract-clothes", {
-          method: "POST",
-          body: buildFormData([files[0]])
-        });
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          alert(error?.error || "Failed to process image.");
-          return;
-        }
-
-        const blob = await response.blob();
-        const imageUrl = URL.createObjectURL(blob);
-        document.getElementById("resultImage").src = imageUrl;
-      } catch (error) {
-        console.error(error);
-        alert("Something went wrong.");
-      }
-    }
-
-    /**
-     * Sends one clothing item image for hierarchical classification.
-     * @returns {Promise<void>}
-     */
-    async function classifySingleImage() {
-      const files = getSelectedFiles();
-      if (files.length === 0) {
-        return;
-      }
-      if (files.length > 1) {
-        alert("Single-image mode uses only the first selected image.");
-      }
-
-      document.getElementById("resultImage").src = "";
-
-      try {
-        const response = await fetch("http://127.0.0.1:5000/extract-item", {
-          method: "POST",
-          body: buildFormData([files[0]], { preview_mode: "high" })
-        });
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          alert(error?.error || "Failed to classify item.");
-          return;
-        }
-
-        const data = await response.json();
-        const itemsContainer = document.getElementById("itemsContainer");
-        itemsContainer.innerHTML = "";
-
-        if (!data.ok) {
-          itemsContainer.innerHTML = "<p>No valid analysis result was returned.</p>";
-          return;
-        }
-
-        renderResultCards([{ ...data, filename: files[0].name }]);
-        if (typeof data.processing_ms === "number") {
-          console.log(`Single image processed in ${data.processing_ms} ms`);
-        }
-      } catch (error) {
-        console.error(error);
-        alert("Something went wrong.");
-      }
-    }
-
-    /**
      * Sends multiple images for batch clothing classification.
      * @returns {Promise<void>}
      */
@@ -162,8 +68,6 @@
       if (files.length === 0) {
         return;
       }
-
-      document.getElementById("resultImage").src = "";
 
       try {
         const response = await fetch("http://127.0.0.1:5000/extract-items", {
