@@ -33,6 +33,11 @@ except Exception:
     np = None
 
 try:
+    import cv2
+except Exception:
+    cv2 = None
+
+try:
     import torch
     from transformers import (
         CLIPModel,
@@ -462,6 +467,7 @@ def classify_images_fast(uploaded_images):
         ranked.sort(key=lambda result: result[1], reverse=True)
         top_subcategory, top_confidence = ranked[0]
         top_category = SUBCATEGORY_TO_CATEGORY[top_subcategory]
+        preview_image = build_fast_transparent_preview(crop, top_category)
 
         results.append({
             'filename': uploaded['filename'],
@@ -472,10 +478,118 @@ def classify_images_fast(uploaded_images):
             'subcategory_confidence': round(float(top_confidence), 4),
             'category_source': 'clip_fast',
             'all_categories': CATEGORY_TAXONOMY,
-            'preview_image': image_to_data_url(crop, max_side=320),
+            'preview_image': image_to_data_url(preview_image, max_side=320),
         })
 
     return results, None
+
+def crop_to_alpha_bounds(image, pad_ratio=0.05):
+    """
+    Crops RGBA image to non-transparent bounds with small padding.
+    """
+    alpha = np.array(image.getchannel('A'))
+    ys, xs = np.where(alpha > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return image
+
+    min_x, max_x = int(xs.min()), int(xs.max())
+    min_y, max_y = int(ys.min()), int(ys.max())
+    width, height = image.size
+    pad_x = max(2, int((max_x - min_x + 1) * pad_ratio))
+    pad_y = max(2, int((max_y - min_y + 1) * pad_ratio))
+
+    left = max(0, min_x - pad_x)
+    top = max(0, min_y - pad_y)
+    right = min(width, max_x + pad_x + 1)
+    bottom = min(height, max_y + pad_y + 1)
+    return image.crop((left, top, right, bottom))
+
+def build_fast_transparent_preview(crop_image, predicted_category=None):
+    """
+    Builds transparent preview with quality-first fallback chain.
+    1) rembg (best quality in this project)
+    2) lightweight GrabCut fallback
+    """
+    image = crop_image.convert('RGBA').copy()
+    image.thumbnail((384, 384))
+
+    if remove is not None:
+        try:
+            removed = remove(image)
+            if isinstance(removed, Image.Image):
+                return crop_to_alpha_bounds(removed.convert('RGBA'))
+            decoded = Image.open(io.BytesIO(removed)).convert('RGBA')
+            return crop_to_alpha_bounds(decoded)
+        except Exception:
+            pass
+
+    if np is None or cv2 is None:
+        return image
+
+    rgb = np.array(image.convert('RGB'))
+    height, width = rgb.shape[:2]
+    if height < 16 or width < 16:
+        return image
+
+    # Trim a tiny outer border first (helps framed product photos).
+    trim_x = max(1, int(width * 0.02))
+    trim_y = max(1, int(height * 0.02))
+    if width - 2 * trim_x > 8 and height - 2 * trim_y > 8:
+        rgb = rgb[trim_y:height - trim_y, trim_x:width - trim_x]
+        height, width = rgb.shape[:2]
+
+    # Build a border-aware initialization mask.
+    edge_pixels = np.concatenate((
+        rgb[0, :, :],
+        rgb[-1, :, :],
+        rgb[:, 0, :],
+        rgb[:, -1, :],
+    ), axis=0).astype(np.int16)
+    bg_color = np.median(edge_pixels, axis=0)
+    color_distance = np.max(np.abs(rgb.astype(np.int16) - bg_color), axis=2)
+    channel_spread = rgb.max(axis=2) - rgb.min(axis=2)
+
+    mask = np.full((height, width), cv2.GC_PR_BGD, np.uint8)
+    sure_bg = (color_distance <= 26) | ((channel_spread <= 16) & (color_distance <= 34))
+    mask[sure_bg] = cv2.GC_BGD
+
+    # Give center area a foreground prior for shoes/clothes in product shots.
+    center_margin_x = max(8, int(width * 0.2))
+    center_margin_y = max(8, int(height * 0.2))
+    mask[
+        center_margin_y:height - center_margin_y,
+        center_margin_x:width - center_margin_x
+    ] = cv2.GC_PR_FGD
+
+    # Rectangle fallback for GrabCut.
+    margin_x = max(6, int(width * 0.06))
+    margin_y = max(6, int(height * 0.06))
+    rect = (margin_x, margin_y, max(1, width - 2 * margin_x), max(1, height - 2 * margin_y))
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+
+    iter_count = 2 if predicted_category == 'footwear' else 1
+    try:
+        cv2.grabCut(rgb, mask, rect, bgd_model, fgd_model, iter_count, cv2.GC_INIT_WITH_MASK)
+    except Exception:
+        return image
+
+    foreground = (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD)
+    if int(foreground.sum()) < 80:
+        return image
+
+    # Keep only the largest connected foreground component.
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground.astype(np.uint8), connectivity=8)
+    if num_labels <= 1:
+        return image
+    largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    foreground = labels == largest_idx
+
+    alpha = np.zeros((height, width), dtype=np.uint8)
+    alpha[foreground] = 255
+    rgba = np.dstack((rgb, alpha))
+    preview = Image.fromarray(rgba, mode='RGBA')
+    return crop_to_alpha_bounds(preview)
 
 def is_likely_skin(r, g, b, a):
     if a == 0:
