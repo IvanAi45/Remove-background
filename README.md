@@ -39,21 +39,6 @@ Open a terminal in the project folder:
 cd C:\Users\YOUR_NAME\Desktop\Remove-background-main
 ```
 
-Quickest option:
-
-```powershell
-.\setup_local.ps1
-```
-
-This script:
-
-- creates a fresh `.venv` if needed
-- installs backend dependencies
-- reuses the local `fashn-human-parser` model from the older desktop project if it exists
-- downloads the new CLIP classification model used by the digital wardrobe flow
-
-Manual option:
-
 Create a virtual environment:
 
 ```powershell
@@ -72,12 +57,6 @@ processing libraries.
 ## Run The Backend
 
 From the project folder, run:
-
-```powershell
-.\start_backend.ps1
-```
-
-Or run the backend directly:
 
 ```powershell
 .\.venv\Scripts\python.exe backend\app.py
