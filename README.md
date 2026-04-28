@@ -39,6 +39,21 @@ Open a terminal in the project folder:
 cd C:\Users\YOUR_NAME\Desktop\Remove-background-main
 ```
 
+Quickest option:
+
+```powershell
+.\setup_local.ps1
+```
+
+This script:
+
+- creates a fresh `.venv` if needed
+- installs backend dependencies
+- reuses the local `fashn-human-parser` model from the older desktop project if it exists
+- downloads the new CLIP classification model used by the digital wardrobe flow
+
+Manual option:
+
 Create a virtual environment:
 
 ```powershell
@@ -59,6 +74,12 @@ processing libraries.
 From the project folder, run:
 
 ```powershell
+.\start_backend.ps1
+```
+
+Or run the backend directly:
+
+```powershell
 .\.venv\Scripts\python.exe backend\app.py
 ```
 
@@ -68,13 +89,20 @@ The Flask server should start at:
 http://127.0.0.1:5000
 ```
 
-The first image extraction may be slow because `fashn-human-parser` downloads
-the model weights from Hugging Face. After that, the model is cached locally.
+The first image extraction or first classification may be slow because the app
+may download model weights from Hugging Face on first use. After that, the
+models are cached locally.
 
 If the model has already been downloaded manually, it can be stored in:
 
 ```text
 backend/models/fashn-human-parser/
+```
+
+The classification flow also uses this Hugging Face model:
+
+```text
+openai/clip-vit-base-patch32
 ```
 
 ## Run The Frontend
