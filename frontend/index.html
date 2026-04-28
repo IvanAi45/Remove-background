@@ -172,23 +172,6 @@
       flex-wrap: wrap;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 18px;
-    }
-
-    .card {
-      border-radius: 22px;
-      background: linear-gradient(145deg, rgba(251, 247, 239, 0.98), rgba(238, 229, 216, 0.98));
-      box-shadow: var(--card-shadow);
-      border: 1px solid var(--line);
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      min-height: 100%;
-    }
-
     .preview {
       display: grid;
       place-items: center;
@@ -207,12 +190,6 @@
 
     .card-body {
       padding: 16px 16px 18px;
-    }
-
-    .card h3 {
-      margin: 0 0 12px 0;
-      font-size: 1.05rem;
-      word-break: break-word;
     }
 
     .meta {
@@ -320,11 +297,35 @@
     }
 
     .wardrobe-item {
+      position: relative;
       border-radius: 18px;
       overflow: hidden;
       background: rgba(251, 247, 239, 0.96);
       border: 1px solid var(--line);
       flex: 0 0 calc((100% - (14px * (var(--wardrobe-items-per-page) - 1))) / var(--wardrobe-items-per-page));
+    }
+
+    .remove-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: 50%;
+      background: #c84f4f;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      line-height: 1;
+      box-shadow: 0 10px 22px rgba(150, 53, 53, 0.28);
+      z-index: 2;
+    }
+
+    .remove-badge:hover {
+      background: #aa3535;
     }
 
     .wardrobe-item .preview {
@@ -562,13 +563,6 @@
       };
     }
 
-    function saveResultToWardrobe(result) {
-      const wardrobe = getStoredWardrobe();
-      wardrobe.unshift(makeWardrobeItem(result));
-      setStoredWardrobe(wardrobe);
-      renderWardrobe();
-    }
-
     function updateWardrobeItemPreview(sourceId, previewImage) {
       if (!sourceId) {
         return;
@@ -724,6 +718,7 @@
       const wrapper = document.createElement("article");
       wrapper.className = "wardrobe-item";
       wrapper.innerHTML = `
+        <button class="remove-badge" type="button" data-role="remove-item" aria-label="Remove item">-</button>
         <div class="preview">
           <img src="${item.preview_image}" alt="${item.filename}" />
         </div>
@@ -732,9 +727,6 @@
           <div class="chip-row">
             <span class="chip">${formatCategory(item.category)}</span>
             <span class="chip">${formatCategory(item.subcategory)}</span>
-          </div>
-          <div class="card-actions">
-            <button class="secondary" type="button" data-role="remove-item">Remove</button>
           </div>
         </div>
       `;
@@ -769,7 +761,6 @@
 
         shelf.classList.remove("is-empty");
         nav.classList.toggle("hidden", items.length <= 4);
-
         items.forEach((item) => {
           container.appendChild(createWardrobeCard(item));
         });
