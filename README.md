@@ -62,10 +62,10 @@ From the project folder, run:
 .\.venv\Scripts\python.exe backend\app.py
 ```
 
-The Flask server should start at:
+The deployed API server is:
 
 ```text
-http://127.0.0.1:5000
+https://lizzjin-wearimpact-classifier.hf.space
 ```
 
 The first image extraction may be slow because `fashn-human-parser` downloads

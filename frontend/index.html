@@ -3,41 +3,498 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clothing Extractor</title>
+  <title>Digital Wardrobe</title>
+  <style>
+    :root {
+      --paper: #f7f1e7;
+      --paper-deep: #eadfce;
+      --ink: #2f2419;
+      --muted: #6e6256;
+      --line: rgba(120, 98, 72, 0.18);
+      --accent: #8d5b3d;
+      --accent-dark: #69412b;
+      --card-shadow: 0 14px 34px rgba(90, 72, 54, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.88), transparent 35%),
+        linear-gradient(180deg, #fcf8f2 0%, #f4ede1 100%);
+    }
+
+    .page {
+      width: min(1280px, calc(100% - 32px));
+      margin: 28px auto 48px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(320px, 440px) 1fr;
+      gap: 24px;
+      align-items: stretch;
+      margin-bottom: 28px;
+    }
+
+    .panel {
+      border-radius: 24px;
+      background: linear-gradient(145deg, rgba(251, 247, 239, 0.96), rgba(238, 229, 216, 0.96));
+      box-shadow: var(--card-shadow);
+      border: 1px solid var(--line);
+      padding: 24px;
+    }
+
+    .panel h1,
+    .panel h2,
+    .panel h3 {
+      margin-top: 0;
+    }
+
+    .upload-panel h1 {
+      margin-bottom: 12px;
+      font-size: clamp(2rem, 3vw, 3rem);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .subcopy {
+      margin: 0 0 18px 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .upload-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .file-input {
+      max-width: 100%;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fffaf3;
+      padding: 11px 18px;
+      font-size: 0.96rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: rgba(141, 91, 61, 0.12);
+      color: var(--accent-dark);
+    }
+
+    button.secondary:hover {
+      background: rgba(141, 91, 61, 0.2);
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: default;
+      transform: none;
+    }
+
+    .status {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .summary-panel {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-content: start;
+    }
+
+    .summary-card {
+      border-radius: 18px;
+      background: rgba(255, 251, 245, 0.8);
+      border: 1px solid var(--line);
+      padding: 18px;
+      min-height: 116px;
+    }
+
+    .summary-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .summary-card strong {
+      display: block;
+      margin-top: 10px;
+      font-size: 2rem;
+      line-height: 1;
+      color: var(--ink);
+    }
+
+    .section-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 34px 0 16px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: 1.45rem;
+    }
+
+    .results-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .preview {
+      display: grid;
+      place-items: center;
+      min-height: 220px;
+      padding: 18px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.55), rgba(243, 234, 220, 0.55)),
+        linear-gradient(180deg, #fbf7ef 0%, #efe3d4 100%);
+    }
+
+    .preview img {
+      max-width: 100%;
+      max-height: 240px;
+      display: block;
+    }
+
+    .card-body {
+      padding: 16px 16px 18px;
+    }
+
+    .meta {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 0.84rem;
+      background: rgba(141, 91, 61, 0.1);
+      color: var(--accent-dark);
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .wardrobe-shelves {
+      display: grid;
+      gap: 18px;
+    }
+
+    .wardrobe-shelf {
+      border-radius: 24px;
+      padding: 18px;
+      background: rgba(255, 251, 245, 0.72);
+      border: 1px solid var(--line);
+      min-height: 280px;
+    }
+
+    .wardrobe-shelf.is-empty {
+      min-height: 180px;
+    }
+
+    .wardrobe-shelf-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .wardrobe-shelf h3 {
+      margin: 0;
+      font-size: 1.12rem;
+    }
+
+    .wardrobe-nav {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-left: auto;
+    }
+
+    .nav-button {
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+
+    .wardrobe-viewport {
+      overflow: hidden;
+      --wardrobe-items-per-page: 4;
+    }
+
+    .wardrobe-track {
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+      scroll-behavior: smooth;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+
+    .wardrobe-track::-webkit-scrollbar {
+      display: none;
+    }
+
+    .wardrobe-item {
+      position: relative;
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(251, 247, 239, 0.96);
+      border: 1px solid var(--line);
+      flex: 0 0 calc((100% - (14px * (var(--wardrobe-items-per-page) - 1))) / var(--wardrobe-items-per-page));
+    }
+
+    .remove-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: 50%;
+      background: #c84f4f;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      line-height: 1;
+      box-shadow: 0 10px 22px rgba(150, 53, 53, 0.28);
+      z-index: 2;
+    }
+
+    .remove-badge:hover {
+      background: #aa3535;
+    }
+
+    .wardrobe-item .preview {
+      height: 220px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .wardrobe-item .preview img {
+      width: 100%;
+      height: 100%;
+      max-width: 180px;
+      max-height: 180px;
+      object-fit: contain;
+      object-position: center;
+    }
+
+    .wardrobe-item .card-body {
+      padding: 14px;
+    }
+
+    .empty-state {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .summary-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .wardrobe-shelf-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .header-controls {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .wardrobe-viewport {
+        --wardrobe-items-per-page: 3;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .wardrobe-viewport {
+        --wardrobe-items-per-page: 2;
+      }
+    }
+  </style>
 </head>
 <body>
-  <h2>Extract Clothes From an Image</h2>
-  <p>This tool can keep all clothing pixels together, or classify one single clothing item into upper body, lower body, or footwear subcategories.</p>
+  <main class="page">
+    <section class="hero">
+      <div class="panel upload-panel">
+        <h1>Digital Wardrobe</h1>
+        <p class="subcopy">
+          Upload clothing photos, let the system clip and classify them, then save the results into your local wardrobe.
+          Everything in the wardrobe is stored on this browser only.
+        </p>
 
-  <input type="file" id="fileInput" accept="image/*" multiple />
-  <button onclick="uploadImage()">Extract Clothes</button>
-  <button onclick="classifySingleImage()">Classify Single Image</button>
-  <button onclick="classifyBatchImages()">Classify Batch Images</button>
+        <div class="upload-controls">
+          <input class="file-input" type="file" id="fileInput" accept="image/*" multiple />
+          <button id="classifyButton" onclick="classifyBatchImages()">Classify Batch Images</button>
+          <button class="ghost" onclick="clearWardrobe()">Clear Wardrobe</button>
+        </div>
 
-  <h3>Result:</h3>
-  <div style="
-    display: inline-block;
-    padding: 18px;
-    border-radius: 18px;
-    background: linear-gradient(145deg, #fbf7ef, #eee5d8);
-    box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
-  ">
-    <img id="resultImage" style="max-width: 300px; display: block;" />
-  </div>
+        <p id="statusLine" class="status">Select one or more clothing images to begin.</p>
+      </div>
 
-  <h3>Classification Result:</h3>
-  <div id="itemsContainer" style="
-    display: flex;
-    flex-wrap: wrap;
-    gap: 18px;
-    margin-top: 12px;
-  "></div>
+      <div class="panel summary-panel">
+        <div class="summary-card">
+          <p>Total Wardrobe Items</p>
+          <strong id="summaryTotal">0</strong>
+        </div>
+        <div class="summary-card">
+          <p>Latest Batch Results</p>
+          <strong id="summaryBatch">0</strong>
+        </div>
+        <div class="summary-card">
+          <p>Stored Categories</p>
+          <strong id="summaryCategories">0</strong>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div id="latestResultsShelf" class="wardrobe-shelf is-empty">
+        <div class="wardrobe-shelf-header">
+          <h2>Latest Classification Results</h2>
+          <div class="header-controls">
+            <div class="results-actions">
+              <button class="ghost" onclick="clearLatestResults()">Clear Results</button>
+            </div>
+            <div id="latestResultsNav" class="wardrobe-nav hidden">
+              <button class="secondary nav-button" type="button" onclick="scrollTrackById('latestResultsTrack', -1)">&larr;</button>
+              <button class="secondary nav-button" type="button" onclick="scrollTrackById('latestResultsTrack', 1)">&rarr;</button>
+            </div>
+          </div>
+        </div>
+        <div class="wardrobe-viewport">
+          <div id="latestResultsTrack" class="wardrobe-track"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <h2>My Wardrobe</h2>
+      </div>
+
+      <div class="wardrobe-shelves">
+        <div id="wardrobe-shelf-upper_body" class="wardrobe-shelf">
+          <div class="wardrobe-shelf-header">
+            <h3>Upper Body</h3>
+            <div id="wardrobe-nav-upper_body" class="wardrobe-nav">
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('upper_body', -1)">&larr;</button>
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('upper_body', 1)">&rarr;</button>
+            </div>
+          </div>
+          <div class="wardrobe-viewport">
+            <div id="wardrobe-upper_body" class="wardrobe-track"></div>
+          </div>
+        </div>
+
+        <div id="wardrobe-shelf-lower_body" class="wardrobe-shelf">
+          <div class="wardrobe-shelf-header">
+            <h3>Lower Body</h3>
+            <div id="wardrobe-nav-lower_body" class="wardrobe-nav">
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('lower_body', -1)">&larr;</button>
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('lower_body', 1)">&rarr;</button>
+            </div>
+          </div>
+          <div class="wardrobe-viewport">
+            <div id="wardrobe-lower_body" class="wardrobe-track"></div>
+          </div>
+        </div>
+
+        <div id="wardrobe-shelf-footwear" class="wardrobe-shelf">
+          <div class="wardrobe-shelf-header">
+            <h3>Footwear</h3>
+            <div id="wardrobe-nav-footwear" class="wardrobe-nav">
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('footwear', -1)">&larr;</button>
+              <button class="secondary nav-button" type="button" onclick="scrollWardrobe('footwear', 1)">&rarr;</button>
+            </div>
+          </div>
+          <div class="wardrobe-viewport">
+            <div id="wardrobe-footwear" class="wardrobe-track"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script>
-    /**
-     * Returns the currently selected upload files.
-     * @returns {File[]}
-     */
+    const WARDROBE_STORAGE_KEY = "digital_wardrobe_items";
+    const API_BASE_URL = "https://lizzjin-wearimpact-classifier.hf.space";
+    let latestResults = [];
+
     function getSelectedFiles() {
       const fileInput = document.getElementById("fileInput");
       const files = Array.from(fileInput.files || []);
@@ -50,11 +507,6 @@
       return files;
     }
 
-    /**
-     * Creates a multipart form payload for image upload.
-     * @param {File[]} files
-     * @returns {FormData}
-     */
     function buildFormData(files, extraFields = {}) {
       const formData = new FormData();
       files.forEach((file) => formData.append("files", file));
@@ -64,109 +516,271 @@
       return formData;
     }
 
-    /**
-     * Clears all classification cards from the result area.
-     * @returns {void}
-     */
-    function resetSplitResults() {
-      document.getElementById("itemsContainer").innerHTML = "";
+    function setStatus(message) {
+      document.getElementById("statusLine").textContent = message;
     }
 
-    /**
-     * Sends image to the extract endpoint and renders PNG output.
-     * @returns {Promise<void>}
-     */
-    async function uploadImage() {
-      const files = getSelectedFiles();
-      if (files.length === 0) {
-        return;
-      }
-      if (files.length > 1) {
-        alert("Extract Clothes currently supports one image at a time. The first selected image will be used.");
-      }
-      resetSplitResults();
+    function setLoadingState(isLoading) {
+      const classifyButton = document.getElementById("classifyButton");
+      classifyButton.disabled = isLoading;
+      classifyButton.textContent = isLoading ? "Classifying..." : "Classify Batch Images";
+    }
 
+    function getStoredWardrobe() {
       try {
-        const response = await fetch("http://127.0.0.1:5000/extract-clothes", {
-          method: "POST",
-          body: buildFormData([files[0]])
-        });
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          alert(error?.error || "Failed to process image.");
-          return;
-        }
-
-        const blob = await response.blob();
-        const imageUrl = URL.createObjectURL(blob);
-        document.getElementById("resultImage").src = imageUrl;
+        const raw = localStorage.getItem(WARDROBE_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
       } catch (error) {
         console.error(error);
-        alert("Something went wrong.");
+        return [];
       }
     }
 
-    /**
-     * Sends one clothing item image for hierarchical classification.
-     * @returns {Promise<void>}
-     */
-    async function classifySingleImage() {
-      const files = getSelectedFiles();
-      if (files.length === 0) {
+    function setStoredWardrobe(items) {
+      localStorage.setItem(WARDROBE_STORAGE_KEY, JSON.stringify(items));
+    }
+
+    function formatCategory(category) {
+      return (category || "unknown").replaceAll("_", " ");
+    }
+
+    function formatConfidence(value) {
+      if (typeof value !== "number") {
+        return "N/A";
+      }
+      return value.toFixed(4);
+    }
+
+    function makeWardrobeItem(result) {
+      return {
+        source_id: result.source_id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        filename: result.filename || "Unnamed file",
+        category: result.category,
+        subcategory: result.subcategory,
+        confidence: result.subcategory_confidence,
+        preview_image: result.preview_image,
+        created_at: new Date().toISOString()
+      };
+    }
+
+    function updateWardrobeItemPreview(sourceId, previewImage) {
+      if (!sourceId) {
         return;
       }
-      if (files.length > 1) {
-        alert("Single-image mode uses only the first selected image.");
+
+      const wardrobe = getStoredWardrobe();
+      let changed = false;
+      wardrobe.forEach((item) => {
+        if (item.source_id === sourceId) {
+          item.preview_image = previewImage;
+          changed = true;
+        }
+      });
+
+      if (!changed) {
+        return;
       }
 
-      document.getElementById("resultImage").src = "";
-
-      try {
-        const response = await fetch("http://127.0.0.1:5000/extract-item", {
-          method: "POST",
-          body: buildFormData([files[0]], { preview_mode: "high" })
-        });
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          alert(error?.error || "Failed to classify item.");
-          return;
-        }
-
-        const data = await response.json();
-        const itemsContainer = document.getElementById("itemsContainer");
-        itemsContainer.innerHTML = "";
-
-        if (!data.ok) {
-          itemsContainer.innerHTML = "<p>No valid analysis result was returned.</p>";
-          return;
-        }
-
-        renderResultCards([{ ...data, filename: files[0].name }]);
-        if (typeof data.processing_ms === "number") {
-          console.log(`Single image processed in ${data.processing_ms} ms`);
-        }
-      } catch (error) {
-        console.error(error);
-        alert("Something went wrong.");
-      }
+      setStoredWardrobe(wardrobe);
+      renderWardrobe();
     }
 
-    /**
-     * Sends multiple images for batch clothing classification.
-     * @returns {Promise<void>}
-     */
+    function saveAllResultsToWardrobe() {
+      if (latestResults.length === 0) {
+        return;
+      }
+
+      const wardrobe = getStoredWardrobe();
+      latestResults
+        .filter((result) => result.ok)
+        .forEach((result) => {
+          wardrobe.unshift(makeWardrobeItem(result));
+        });
+
+      setStoredWardrobe(wardrobe);
+      renderWardrobe();
+      setStatus(`Saved ${latestResults.filter((result) => result.ok).length} item(s) to your local wardrobe.`);
+    }
+
+    function removeWardrobeItem(itemId) {
+      const wardrobe = getStoredWardrobe().filter((item) => item.id !== itemId);
+      setStoredWardrobe(wardrobe);
+      renderWardrobe();
+    }
+
+    function clearWardrobe() {
+      localStorage.removeItem(WARDROBE_STORAGE_KEY);
+      renderWardrobe();
+      setStatus("Wardrobe cleared from this browser.");
+    }
+
+    function clearLatestResults() {
+      latestResults = [];
+      const track = document.getElementById("latestResultsTrack");
+      track.innerHTML = "";
+      document.getElementById("latestResultsShelf").classList.add("is-empty");
+      document.getElementById("latestResultsNav").classList.add("hidden");
+      updateSummaryCards();
+      setStatus("Latest classification results cleared.");
+    }
+
+    function scrollTrackById(trackId, direction) {
+      const track = document.getElementById(trackId);
+      if (!track) {
+        return;
+      }
+
+      const scrollAmount = track.clientWidth;
+      track.scrollBy({
+        left: direction * scrollAmount,
+        behavior: "smooth"
+      });
+    }
+
+    function scrollWardrobe(category, direction) {
+      scrollTrackById(`wardrobe-${category}`, direction);
+    }
+
+    function updateSummaryCards() {
+      const wardrobe = getStoredWardrobe();
+      const uniqueCategories = new Set(wardrobe.map((item) => item.category));
+      document.getElementById("summaryTotal").textContent = String(wardrobe.length);
+      document.getElementById("summaryBatch").textContent = String(latestResults.length);
+      document.getElementById("summaryCategories").textContent = String(uniqueCategories.size);
+    }
+
+    function createResultCard(result) {
+      const card = document.createElement("article");
+      card.className = "wardrobe-item";
+
+      if (!result.ok) {
+        card.innerHTML = `
+          <div class="card-body">
+            <h3>${result.filename || "Unnamed file"}</h3>
+            <p class="empty-state">Error: ${result.error || "Unknown failure"}</p>
+          </div>
+        `;
+        return card;
+      }
+
+      card.innerHTML = `
+        <div class="preview">
+          <img src="${result.preview_image}" alt="${result.filename || "Clothing preview"}" />
+        </div>
+        <div class="card-body">
+          <h3>${result.filename || "Unnamed file"}</h3>
+          <div class="meta">
+            <span><strong>Category:</strong> ${formatCategory(result.category)}</span>
+            <span><strong>Subcategory:</strong> ${formatCategory(result.subcategory)}</span>
+            <span><strong>Confidence:</strong> ${formatConfidence(result.subcategory_confidence)}</span>
+            <span><strong>Source:</strong> ${result.category_source || "unknown"}</span>
+          </div>
+          <div class="chip-row">
+            <span class="chip">${formatCategory(result.category)}</span>
+            <span class="chip">${formatCategory(result.subcategory)}</span>
+          </div>
+        </div>
+      `;
+
+      const imageElement = card.querySelector("img");
+      if (result.preview_token && result.preview_ready === false) {
+        pollPreviewResult(result.preview_token, imageElement, result);
+      }
+
+      return card;
+    }
+
+    function renderResultCards(results) {
+      const itemsContainer = document.getElementById("latestResultsTrack");
+      const latestShelf = document.getElementById("latestResultsShelf");
+      const latestNav = document.getElementById("latestResultsNav");
+      itemsContainer.innerHTML = "";
+
+      if (!results || results.length === 0) {
+        latestShelf.classList.add("is-empty");
+        latestNav.classList.add("hidden");
+        itemsContainer.innerHTML = "<p class=\"empty-state\">No recent classification results yet.</p>";
+        return;
+      }
+
+      latestShelf.classList.remove("is-empty");
+      latestNav.classList.toggle("hidden", results.length <= 4);
+
+      results.forEach((result) => {
+        if (!result.source_id) {
+          result.source_id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        }
+        itemsContainer.appendChild(createResultCard(result));
+      });
+    }
+
+    function createWardrobeCard(item) {
+      const wrapper = document.createElement("article");
+      wrapper.className = "wardrobe-item";
+      wrapper.innerHTML = `
+        <button class="remove-badge" type="button" data-role="remove-item" aria-label="Remove item">-</button>
+        <div class="preview">
+          <img src="${item.preview_image}" alt="${item.filename}" />
+        </div>
+        <div class="card-body">
+          <h3>${item.filename}</h3>
+          <div class="chip-row">
+            <span class="chip">${formatCategory(item.category)}</span>
+            <span class="chip">${formatCategory(item.subcategory)}</span>
+          </div>
+        </div>
+      `;
+
+      wrapper.querySelector('[data-role="remove-item"]').addEventListener("click", () => {
+        removeWardrobeItem(item.id);
+      });
+
+      return wrapper;
+    }
+
+    function renderWardrobe() {
+      const wardrobe = getStoredWardrobe();
+      const categories = ["upper_body", "lower_body", "footwear"];
+
+      categories.forEach((category) => {
+        const container = document.getElementById(`wardrobe-${category}`);
+        const shelf = document.getElementById(`wardrobe-shelf-${category}`);
+        const nav = document.getElementById(`wardrobe-nav-${category}`);
+        container.innerHTML = "";
+
+        const items = wardrobe.filter((item) => item.category === category);
+        if (items.length === 0) {
+          shelf.classList.add("is-empty");
+          nav.classList.add("hidden");
+          const empty = document.createElement("p");
+          empty.className = "empty-state";
+          empty.textContent = "No items saved in this section yet.";
+          container.appendChild(empty);
+          return;
+        }
+
+        shelf.classList.remove("is-empty");
+        nav.classList.toggle("hidden", items.length <= 4);
+        items.forEach((item) => {
+          container.appendChild(createWardrobeCard(item));
+        });
+      });
+
+      updateSummaryCards();
+    }
+
     async function classifyBatchImages() {
       const files = getSelectedFiles();
       if (files.length === 0) {
         return;
       }
 
-      document.getElementById("resultImage").src = "";
+      setLoadingState(true);
+      setStatus(`Classifying ${files.length} image(s)...`);
 
       try {
-        const response = await fetch("http://127.0.0.1:5000/extract-items", {
+        const response = await fetch(`${API_BASE_URL}/extract-items`, {
           method: "POST",
           body: buildFormData(files, { preview_mode: "high" })
         });
@@ -174,109 +788,46 @@
         if (!response.ok) {
           const error = await response.json().catch(() => null);
           alert(error?.error || "Failed to classify batch items.");
+          setStatus("Classification failed.");
           return;
         }
 
         const data = await response.json();
         if (!data.results || data.results.length === 0) {
-          document.getElementById("itemsContainer").innerHTML = "<p>No valid analysis result was returned.</p>";
+          latestResults = [];
+          document.getElementById("latestResultsTrack").innerHTML = "<p class=\"empty-state\">No valid analysis result was returned.</p>";
+          updateSummaryCards();
+          setStatus("No valid result was returned for this batch.");
           return;
         }
 
-        renderResultCards(data.results);
-        if (typeof data.processing_ms === "number") {
-          console.log(`Batch processed in ${data.processing_ms} ms`);
-        }
+        latestResults = data.results;
+        renderResultCards(latestResults);
+        saveAllResultsToWardrobe();
+        updateSummaryCards();
+        setStatus(`Batch complete: ${latestResults.length} item(s) classified and saved to your local wardrobe in ${data.processing_ms} ms.`);
       } catch (error) {
         console.error(error);
         alert("Something went wrong.");
+        setStatus("Unexpected error while classifying images.");
+      } finally {
+        setLoadingState(false);
       }
     }
 
-    /**
-     * Renders classification cards for one or many images.
-     * @param {Array<Object>} results
-     * @returns {void}
-     */
-    function renderResultCards(results) {
-      const itemsContainer = document.getElementById("itemsContainer");
-      itemsContainer.innerHTML = "";
-
-      results.forEach((result) => {
-        const card = document.createElement("div");
-        card.style.cssText = `
-          width: 300px;
-          padding: 16px;
-          border-radius: 18px;
-          background: linear-gradient(145deg, #fbf7ef, #eee5d8);
-          box-shadow: inset 0 0 0 1px rgba(120, 98, 72, 0.12);
-        `;
-
-        const filename = document.createElement("h4");
-        filename.textContent = result.filename || "Unnamed file";
-        filename.style.margin = "0 0 8px 0";
-        card.appendChild(filename);
-
-        if (!result.ok) {
-          const errorLine = document.createElement("p");
-          errorLine.textContent = `Error: ${result.error || "Unknown failure"}`;
-          errorLine.style.margin = "0";
-          errorLine.style.color = "#9b1c1c";
-          card.appendChild(errorLine);
-          itemsContainer.appendChild(card);
-          return;
-        }
-
-        const title = document.createElement("p");
-        title.textContent = `Category: ${result.category}`;
-        title.style.margin = "0 0 6px 0";
-
-        const subTitle = document.createElement("p");
-        subTitle.textContent = `Subcategory: ${result.subcategory}`;
-        subTitle.style.margin = "0 0 6px 0";
-
-        const scoreLine = document.createElement("p");
-        scoreLine.textContent = `Confidence: ${result.subcategory_confidence}`;
-        scoreLine.style.margin = "0 0 6px 0";
-
-        const sourceLine = document.createElement("p");
-        sourceLine.textContent = `Category source: ${result.category_source}`;
-        sourceLine.style.margin = "0 0 12px 0";
-
-        const img = document.createElement("img");
-        img.src = result.preview_image;
-        img.style.maxWidth = "100%";
-        img.style.display = "block";
-
-        card.appendChild(title);
-        card.appendChild(subTitle);
-        card.appendChild(scoreLine);
-        card.appendChild(sourceLine);
-        card.appendChild(img);
-        itemsContainer.appendChild(card);
-
-        if (result.preview_token && result.preview_ready === false) {
-          pollPreviewResult(result.preview_token, img);
-        }
-      });
-    }
-
-    /**
-     * Polls backend until high-quality preview is ready and swaps the image.
-     * @param {string} previewToken
-     * @param {HTMLImageElement} imageElement
-     * @returns {Promise<void>}
-     */
-    async function pollPreviewResult(previewToken, imageElement) {
+    async function pollPreviewResult(previewToken, imageElement, result) {
       for (let attempt = 0; attempt < 40; attempt += 1) {
         try {
-          const response = await fetch(`http://127.0.0.1:5000/preview-result/${previewToken}`);
+          const response = await fetch(`${API_BASE_URL}/preview-result/${previewToken}`);
           if (!response.ok) {
             return;
           }
+
           const data = await response.json();
           if (data.ready && data.preview_image) {
             imageElement.src = data.preview_image;
+            result.preview_image = data.preview_image;
+            updateWardrobeItemPreview(result.source_id, data.preview_image);
             return;
           }
         } catch (error) {
@@ -287,6 +838,8 @@
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
+
+    renderWardrobe();
   </script>
 </body>
 </html>
