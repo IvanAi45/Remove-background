@@ -492,7 +492,6 @@
 
   <script>
     const WARDROBE_STORAGE_KEY = "digital_wardrobe_items";
-    const API_BASE_URL = "https://lizzjin-wearimpact-classifier.hf.space";
     let latestResults = [];
 
     function getSelectedFiles() {
@@ -780,7 +779,7 @@
       setStatus(`Classifying ${files.length} image(s)...`);
 
       try {
-        const response = await fetch(`${API_BASE_URL}/extract-items`, {
+        const response = await fetch("http://127.0.0.1:5000/extract-items", {
           method: "POST",
           body: buildFormData(files, { preview_mode: "high" })
         });
@@ -802,10 +801,10 @@
         }
 
         latestResults = data.results;
-        renderResultCards(latestResults);
+        renderResultCards(data.results);
         saveAllResultsToWardrobe();
         updateSummaryCards();
-        setStatus(`Batch complete: ${latestResults.length} item(s) classified and saved to your local wardrobe in ${data.processing_ms} ms.`);
+        setStatus(`Batch complete: ${data.results.length} item(s) classified and saved to your local wardrobe in ${data.processing_ms} ms.`);
       } catch (error) {
         console.error(error);
         alert("Something went wrong.");
@@ -818,7 +817,7 @@
     async function pollPreviewResult(previewToken, imageElement, result) {
       for (let attempt = 0; attempt < 40; attempt += 1) {
         try {
-          const response = await fetch(`${API_BASE_URL}/preview-result/${previewToken}`);
+          const response = await fetch(`http://127.0.0.1:5000/preview-result/${previewToken}`);
           if (!response.ok) {
             return;
           }

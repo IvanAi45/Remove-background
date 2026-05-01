@@ -68,13 +68,20 @@ The deployed API server is:
 https://lizzjin-wearimpact-classifier.hf.space
 ```
 
-The first image extraction may be slow because `fashn-human-parser` downloads
-the model weights from Hugging Face. After that, the model is cached locally.
+The first image extraction or first classification may be slow because the app
+may download model weights from Hugging Face on first use. After that, the
+models are cached locally.
 
 If the model has already been downloaded manually, it can be stored in:
 
 ```text
 backend/models/fashn-human-parser/
+```
+
+The classification flow also uses this Hugging Face model:
+
+```text
+openai/clip-vit-base-patch32
 ```
 
 ## Run The Frontend
