@@ -99,6 +99,59 @@ Then upload an image and choose one of these actions:
 - **Classify Single Item**: accepts only one clothing item per upload and returns
   category + subtype classification result
 
+## Washing Label Material Demo
+
+This repo also includes a standalone washing-label material recognizer:
+
+- Backend: `backend/material_recognition.py`
+- Demo page: `frontend/label_demo.html`
+
+Behavior:
+
+- If OCR text contains Chinese, the pipeline translates composition tokens to
+  English first, then parses percentages.
+- If OCR text is already English, it goes directly into parsing.
+- Final displayed material labels are always English.
+
+### Demo dependencies and setup
+
+Install backend dependencies:
+
+```powershell
+python -m pip install -r backend/requirements.txt
+```
+
+Install system Tesseract OCR (required for image OCR):
+
+- Windows (recommended):
+  ```powershell
+  winget install --id UB-Mannheim.TesseractOCR -e --accept-package-agreements --accept-source-agreements
+  ```
+- Verify:
+  ```powershell
+  tesseract --version
+  ```
+
+If `tesseract` is not on PATH, set:
+
+```powershell
+$env:TESSERACT_CMD="C:\Program Files\Tesseract-OCR\tesseract.exe"
+```
+
+### Run demo
+
+From project root:
+
+```powershell
+python backend/material_recognition.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5055/
+```
+
 ## API
 
 ### `POST /extract-clothes`

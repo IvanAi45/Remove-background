@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Washing Label Materials · Demo</title>
+  <style>
+    :root {
+      /* Mirror `frontend/index.html` palette */
+      --paper: #f7f1e7;
+      --paper-deep: #eadfce;
+      --ink: #2f2419;
+      --muted: #6e6256;
+      --line: rgba(120, 98, 72, 0.18);
+      --accent: #8d5b3d;
+      --accent-dark: #69412b;
+      --card-shadow: 0 14px 34px rgba(90, 72, 54, 0.08);
+
+      /* Washing label pills (green tint like fig-3) */
+      --pill-bg: rgba(149, 205, 165, 0.22);
+      --pill-border: rgba(72, 150, 103, 0.25);
+      --pill-text: #1d5d3d;
+      --header-grey: #8b857d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.88), transparent 35%),
+        linear-gradient(180deg, #fcf8f2 0%, #f4ede1 100%);
+    }
+
+    .wrap {
+      width: min(980px, calc(100% - 32px));
+      margin: 28px auto 48px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 3vw, 2.6rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px 0;
+    }
+
+    .lead {
+      margin: 0 0 22px 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.55;
+    }
+
+    .card {
+      border-radius: 24px;
+      background: linear-gradient(145deg, rgba(251, 247, 239, 0.96), rgba(238, 229, 216, 0.96));
+      box-shadow: var(--card-shadow);
+      border: 1px solid var(--line);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .upload-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      cursor: pointer;
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fffaf3;
+      padding: 11px 18px;
+      font-size: 0.96rem;
+      font-weight: 600;
+      transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+    }
+
+    .btn:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-ghost {
+      background: rgba(141, 91, 61, 0.12);
+      color: var(--accent-dark);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(141, 91, 61, 0.2);
+    }
+
+    .file-input {
+      position: absolute;
+      width: 0;
+      height: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .preview-block {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    .preview-img-wrap {
+      border-radius: 14px;
+      overflow: hidden;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.55), rgba(243, 234, 220, 0.55)),
+        linear-gradient(180deg, #fbf7ef 0%, #efe3d4 100%);
+      border: 1px solid var(--line);
+      width: 100%;
+      max-width: 420px;
+      margin: 0 auto;
+      aspect-ratio: 3 / 4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .preview-placeholder {
+      color: var(--muted);
+      font-size: 0.88rem;
+      padding: 20px;
+      text-align: center;
+    }
+
+    /* —— Washing-label style: MATERIAL COMPOSITION —— */
+    .label-section {
+      margin-top: 4px;
+    }
+
+    .label-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--header-grey);
+    }
+
+    .label-header svg {
+      flex-shrink: 0;
+      opacity: 0.85;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px 6px 10px;
+      border-radius: 999px;
+      background: var(--pill-bg);
+      border: 1px solid var(--pill-border);
+      color: var(--pill-text);
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    .pill svg {
+      flex-shrink: 0;
+    }
+
+    .pill-empty {
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 500;
+      padding: 8px 0;
+    }
+
+    .label-foot {
+      margin-top: 14px;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      color: #9a9a9a;
+    }
+
+    .aux {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px dashed var(--line);
+    }
+
+    .aux h3 {
+      margin: 0 0 8px 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 88px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 0.88rem;
+      resize: vertical;
+    }
+
+    details.raw-ocr {
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    details.raw-ocr summary {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .err {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #fff0f0;
+      color: #8b2a2a;
+      font-size: 0.86rem;
+    }
+
+    .notes {
+      margin-top: 8px;
+      font-size: 0.82rem;
+      color: #856404;
+      background: #fffbf0;
+      padding: 8px 10px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Washing label · materials</h1>
+    <p class="lead">
+      Upload a washing label photo and run recognition. Results are rendered as “washing label” pills under
+      the image. For environments without OCR, you can paste composition text and parse it via the same API.
+    </p>
+
+    <div class="card">
+      <div class="upload-row">
+        <input type="file" id="file" class="file-input" accept="image/png,image/jpeg,image/webp" />
+        <button type="button" class="btn" id="pickBtn">Choose image</button>
+        <button type="button" class="btn btn-ghost" id="runBtn" disabled>Recognize materials</button>
+      </div>
+
+      <div class="preview-block">
+        <div class="preview-img-wrap" id="previewBox">
+          <div class="preview-placeholder" id="previewPh">No image selected</div>
+          <img id="previewImg" alt="Preview" hidden />
+        </div>
+
+        <div>
+          <div class="label-section" id="materialSection">
+            <div class="label-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3C8.5 3 6 5.2 6 8v2.5c0 1.9 1.6 3.5 3.5 3.5h1c.3 0 .5.2.5.5v1.5H8v2h8v-2h-3v-1.5c0-.3.2-.5.5-.5h1c1.9 0 3.5-1.6 3.5-3.5V8c0-2.8-2.5-5-6-5z" stroke="currentColor" stroke-width="1.4" />
+                <path d="M9 21h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+              <span>Material composition</span>
+            </div>
+            <div class="pill-row" id="pillRow">
+              <span class="pill-empty">Upload a label and run recognition to show materials here.</span>
+            </div>
+            <p class="label-foot">
+              Auto-detected from the photo where possible. Always check the physical label.<br />
+              If OCR is unavailable, use the text box below as a fallback.
+            </p>
+          </div>
+
+          <div id="errorBox" class="err" hidden></div>
+          <div id="notesBox" class="notes" hidden></div>
+          <details class="raw-ocr" id="rawDetails" hidden>
+            <summary>Show normalized text</summary>
+            <pre id="rawPre" style="white-space: pre-wrap; margin: 8px 0 0 0;"></pre>
+          </details>
+        </div>
+      </div>
+
+      <div class="aux">
+        <h3>Fallback: paste composition text</h3>
+        <textarea id="pasteText" placeholder="Examples: 80% Cotton 20% Polyester OR 棉 65% 聚酯纤维 35%"></textarea>
+        <div class="upload-row" style="margin-top:10px;">
+          <button type="button" class="btn btn-ghost" id="parseBtn">Parse text</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      /**
+       * @typedef {Object} MaterialDTO
+       * @property {string} key
+       * @property {string} name_en
+       * @property {string} name_zh
+       * @property {number} percent
+       * @property {string} icon
+       * @property {string} [label]
+       */
+
+      /**
+       * @param {string} iconId
+       * @returns {string} 内联 SVG 标记
+       */
+      function fabricIconSvg(iconId) {
+        var id = iconId || 'cotton';
+        var common = ' width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"';
+        var stroke = ' stroke="currentColor" stroke-width="1.5"';
+        var svgs = {
+          cotton: '<svg' + common + '><ellipse cx="12" cy="13" rx="7" ry="5"' + stroke + '/><path d="M8 10c2-2 6-2 8 0" ' + stroke + '/><path d="M9 16c1.5 1 4.5 1 6 0" ' + stroke + '/></svg>',
+          polyester: '<svg' + common + '><path d="M5 18c3-6 5-10 7-14M9 18c2.5-5 4.5-9 6.5-13M13 18c2-4 3.5-7.5 5-11" ' + stroke + '/></svg>',
+          wool: '<svg' + common + '><path d="M7 16c2-6 6-9 10-9-1 4-3 8-6 11-2-2-3-4-4-2z" ' + stroke + '/></svg>',
+          silk: '<svg' + common + '><path d="M12 4v16M8 8c4 2 8 2 8-2" ' + stroke + '/><circle cx="12" cy="6" r="1.2" fill="currentColor"/></svg>',
+          linen: '<svg' + common + '><path d="M12 3v18M8 7h8M8 12h8M8 17h5" ' + stroke + '/></svg>',
+          viscose: '<svg' + common + '><path d="M6 18c0-8 4-12 6-14 2 4 4 9 4 14" ' + stroke + '/><path d="M9 14h6" ' + stroke + '/></svg>',
+          nylon: '<svg' + common + '><rect x="5" y="5" width="14" height="14" rx="3"' + stroke + '/><path d="M9 9l6 6M15 9l-6 6" ' + stroke + '/></svg>',
+          spandex: '<svg' + common + '><path d="M7 17c4-3 7-7 10-12M6 8c3 3 6 6 10 8" ' + stroke + '/></svg>',
+          acrylic: '<svg' + common + '><circle cx="12" cy="12" r="7"' + stroke + '/><circle cx="12" cy="12" r="3"' + stroke + '/></svg>',
+          down: '<svg' + common + '><path d="M12 4c-3 4-5 8-5 12 0 3 2 5 5 5s5-2 5-5c0-4-2-8-5-12z"' + stroke + '/></svg>',
+          leather: '<svg' + common + '><path d="M5 8c3-2 7-2 10 0v10c-3 2-7 2-10 0V8z"' + stroke + '/></svg>'
+        };
+        return svgs[id] || svgs.cotton;
+      }
+
+      /**
+       * @param {MaterialDTO[]} materials
+       */
+      function renderPills(materials) {
+        var row = document.getElementById('pillRow');
+        row.innerHTML = '';
+        if (!materials || !materials.length) {
+          var empty = document.createElement('span');
+          empty.className = 'pill-empty';
+          empty.textContent = 'No recognizable “percent + material” pairs found.';
+          row.appendChild(empty);
+          return;
+        }
+        materials.forEach(function (m) {
+          var pill = document.createElement('div');
+          pill.className = 'pill';
+          pill.innerHTML = fabricIconSvg(m.icon) + '<span>' + escapeHtml(m.label || (m.name_en + ' ' + Math.round(m.percent) + '%')) + '</span>';
+          row.appendChild(pill);
+        });
+      }
+
+      /**
+       * @param {string} s
+       * @returns {string}
+       */
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      /**
+       * @param {Record<string, unknown>} data
+       */
+      function applyResult(data) {
+        var errBox = document.getElementById('errorBox');
+        var notesBox = document.getElementById('notesBox');
+        var rawDetails = document.getElementById('rawDetails');
+        var rawPre = document.getElementById('rawPre');
+        errBox.hidden = true;
+        notesBox.hidden = true;
+        rawDetails.hidden = true;
+
+        /** @type {MaterialDTO[]} */
+        var mats = /** @type {MaterialDTO[]} */ (data.materials || []);
+        renderPills(mats);
+
+        var notes = data.notes || [];
+        if (notes.length) {
+          notesBox.textContent = notes.join(' ');
+          notesBox.hidden = false;
+        }
+        if (data.raw_text || data.translated_text || data.normalized_text) {
+          var parts = [];
+          if (data.raw_text) parts.push('RAW:\\n' + String(data.raw_text));
+          if (data.translated_text) parts.push('TRANSLATED:\\n' + String(data.translated_text));
+          if (data.normalized_text) parts.push('NORMALIZED:\\n' + String(data.normalized_text));
+          rawPre.textContent = parts.join('\\n\\n');
+          rawDetails.hidden = false;
+        }
+      }
+
+      var fileInput = document.getElementById('file');
+      var pickBtn = document.getElementById('pickBtn');
+      var runBtn = document.getElementById('runBtn');
+      var previewImg = document.getElementById('previewImg');
+      var previewPh = document.getElementById('previewPh');
+
+      pickBtn.addEventListener('click', function () {
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) {
+          runBtn.disabled = true;
+          return;
+        }
+        runBtn.disabled = false;
+        previewPh.hidden = true;
+        previewImg.hidden = false;
+        previewImg.src = URL.createObjectURL(f);
+      });
+
+      runBtn.addEventListener('click', function () {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+
+        var errBox = document.getElementById('errorBox');
+        errBox.hidden = true;
+        runBtn.disabled = true;
+
+        var fd = new FormData();
+        fd.append('file', f);
+
+        fetch('/api/recognize', { method: 'POST', body: fd })
+          .then(function (r) {
+            return r.json().then(function (j) {
+              if (!r.ok) throw new Error(j.error || r.statusText);
+              return j;
+            });
+          })
+          .then(applyResult)
+          .catch(function (e) {
+            errBox.textContent = String(e.message || e);
+            errBox.hidden = false;
+          })
+          .finally(function () {
+            runBtn.disabled = false;
+          });
+      });
+
+      document.getElementById('parseBtn').addEventListener('click', function () {
+        var text = String(document.getElementById('pasteText').value || '');
+        fetch('/api/parse-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            // Keep a browser-side normalized view too (helps when backend isn't running).
+            if (!data.normalized_text) {
+              var local = parseMaterialsFromText(text);
+              data.normalized_text = local.normalized_text;
+              if (!data.materials || !data.materials.length) data.materials = local.materials;
+              if (!data.notes || !data.notes.length) data.notes = local.notes;
+            }
+            applyResult(data);
+          })
+          .catch(function () {
+            // If backend isn't running, fallback to local parsing.
+            applyResult(parseMaterialsFromText(text));
+          });
+      });
+
+      /**
+       * @param {string} text
+       * @returns {boolean}
+       */
+      function containsCjk(text) {
+        return /[\u4e00-\u9fff]/.test(text || '');
+      }
+
+      /**
+       * Deterministic offline “translation”: only material tokens + patterns.
+       * @param {string} text
+       * @returns {string}
+       */
+      function translateZhToEn(text) {
+        var t = String(text || '')
+          .replace(/\u3000/g, ' ')
+          .replace(/％/g, '%')
+          .replace(/[，。；、】【、]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        /** @type {Record<string, string>} */
+        var dict = {
+          '聚酯纤维': 'Polyester',
+          '聚酯': 'Polyester',
+          '涤纶': 'Polyester',
+          '粘胶纤维': 'Viscose',
+          '粘胶': 'Viscose',
+          '粘纤': 'Viscose',
+          '人造丝': 'Rayon',
+          '锦纶': 'Nylon',
+          '尼龙': 'Nylon',
+          '氨纶': 'Spandex',
+          '弹性纤维': 'Elastane',
+          '莱卡': 'Lycra',
+          '腈纶': 'Acrylic',
+          '开司米': 'Cashmere',
+          '羊绒': 'Cashmere',
+          '羊毛': 'Wool',
+          '真丝': 'Silk',
+          '桑蚕丝': 'Silk',
+          '亚麻': 'Linen',
+          '苎麻': 'Linen',
+          '麻': 'Hemp',
+          '竹纤维': 'Bamboo fiber',
+          '莫代尔': 'Modal',
+          '醋酯纤维': 'Acetate',
+          '聚氨酯': 'Polyurethane',
+          '羽绒': 'Down',
+          '白鸭绒': 'Down',
+          '灰鸭绒': 'Down',
+          '皮革': 'Leather',
+          '真皮': 'Leather',
+          '牛皮': 'Leather',
+          '羊皮': 'Leather',
+          '纯棉': 'Cotton',
+          '全棉': 'Cotton',
+          '棉': 'Cotton'
+        };
+
+        // Replace longer keys first.
+        Object.keys(dict)
+          .sort(function (a, b) { return b.length - a.length; })
+          .forEach(function (k) { t = t.split(k).join(dict[k]); });
+
+        // Normalize: "Cotton 65%" -> "65% Cotton"
+        t = t.replace(/\b([A-Za-z][A-Za-z \-]{1,28}?)\s+(\d{1,3})\s*%/g, '$2% $1');
+        return t;
+      }
+
+      /**
+       * @param {string} text
+       * @returns {string}
+       */
+      function normalizeForParsing(text) {
+        var t = String(text || '').replace(/\u3000/g, ' ').replace(/％/g, '%');
+        t = t.replace(/\s+/g, ' ').trim();
+        if (containsCjk(t)) t = translateZhToEn(t);
+        return t;
+      }
+
+      /**
+       * @param {string} text
+       * @returns {{ materials: MaterialDTO[], notes: string[], normalized_text: string }}
+       */
+      function parseMaterialsFromText(text) {
+        var normalized = normalizeForParsing(text);
+
+        /** @type {Record<string, { key: string, name_en: string, name_zh: string, icon: string }>} */
+        var canonical = {
+          cotton: { key: 'cotton', name_en: 'Cotton', name_zh: '棉', icon: 'cotton' },
+          polyester: { key: 'polyester', name_en: 'Polyester', name_zh: '聚酯纤维', icon: 'polyester' },
+          wool: { key: 'wool', name_en: 'Wool', name_zh: '羊毛', icon: 'wool' },
+          silk: { key: 'silk', name_en: 'Silk', name_zh: '丝', icon: 'silk' },
+          linen: { key: 'linen', name_en: 'Linen', name_zh: '亚麻', icon: 'linen' },
+          viscose: { key: 'viscose', name_en: 'Viscose', name_zh: '粘胶纤维', icon: 'viscose' },
+          rayon: { key: 'rayon', name_en: 'Rayon', name_zh: '人造丝', icon: 'viscose' },
+          nylon: { key: 'nylon', name_en: 'Nylon', name_zh: '锦纶', icon: 'nylon' },
+          spandex: { key: 'spandex', name_en: 'Spandex', name_zh: '氨纶', icon: 'spandex' },
+          elastane: { key: 'elastane', name_en: 'Elastane', name_zh: '弹性纤维', icon: 'spandex' },
+          lycra: { key: 'lycra', name_en: 'Lycra', name_zh: '莱卡', icon: 'spandex' },
+          acrylic: { key: 'acrylic', name_en: 'Acrylic', name_zh: '腈纶', icon: 'acrylic' },
+          cashmere: { key: 'cashmere', name_en: 'Cashmere', name_zh: '羊绒', icon: 'wool' },
+          modal: { key: 'modal', name_en: 'Modal', name_zh: '莫代尔', icon: 'viscose' },
+          hemp: { key: 'hemp', name_en: 'Hemp', name_zh: '麻', icon: 'linen' },
+          bamboo: { key: 'bamboo', name_en: 'Bamboo fiber', name_zh: '竹纤维', icon: 'cotton' },
+          acetate: { key: 'acetate', name_en: 'Acetate', name_zh: '醋酯纤维', icon: 'viscose' },
+          polyurethane: { key: 'polyurethane', name_en: 'Polyurethane', name_zh: '聚氨酯', icon: 'nylon' },
+          down: { key: 'down', name_en: 'Down', name_zh: '羽绒', icon: 'down' },
+          leather: { key: 'leather', name_en: 'Leather', name_zh: '皮革', icon: 'leather' }
+        };
+
+        /** @type {Record<string, string>} */
+        var alias = {
+          cotton: 'cotton',
+          'bamboo': 'bamboo',
+          'bamboo fiber': 'bamboo',
+          polyester: 'polyester',
+          wool: 'wool',
+          silk: 'silk',
+          linen: 'linen',
+          viscose: 'viscose',
+          rayon: 'rayon',
+          nylon: 'nylon',
+          spandex: 'spandex',
+          elastane: 'elastane',
+          lycra: 'lycra',
+          acrylic: 'acrylic',
+          cashmere: 'cashmere',
+          modal: 'modal',
+          hemp: 'hemp',
+          acetate: 'acetate',
+          polyurethane: 'polyurethane',
+          down: 'down',
+          leather: 'leather'
+        };
+
+        /** @type {Array<{percent: number, token: string}>} */
+        var pairs = [];
+
+        // 80% Cotton
+        var re1 = /(\d{1,3})\s*%\s*([A-Za-z][A-Za-z\s\-]{0,28}?)(?=\s*\d|\s*%|[^\w\-]|$)/gi;
+        var m1;
+        while ((m1 = re1.exec(normalized))) {
+          pairs.push({ percent: Number(m1[1]), token: String(m1[2]).trim() });
+        }
+
+        // Cotton 80%  -> normalized earlier, but keep as fallback
+        var re2 = /([A-Za-z][A-Za-z\s\-]{1,24}?)\s*[:：]?\s*(\d{1,3})\s*%/gi;
+        var m2;
+        while ((m2 = re2.exec(normalized))) {
+          pairs.push({ percent: Number(m2[2]), token: String(m2[1]).trim() });
+        }
+
+        /** @type {Record<string, MaterialDTO>} */
+        var byKey = {};
+        pairs.forEach(function (p) {
+          if (!p || !(p.percent >= 0) || p.percent > 100) return;
+          var parts = String(p.token).split(/[/+\s]+/g).filter(Boolean);
+          var resolved = null;
+          for (var i = 0; i < parts.length; i++) {
+            var k = String(parts[i]).toLowerCase();
+            if (alias[k]) { resolved = alias[k]; break; }
+          }
+          if (!resolved) {
+            var kk = String(p.token).toLowerCase();
+            if (alias[kk]) resolved = alias[kk];
+          }
+          if (!resolved || !canonical[resolved]) return;
+
+          var c = canonical[resolved];
+          var dto = {
+            key: c.key,
+            name_en: c.name_en,
+            name_zh: c.name_zh,
+            percent: Number(p.percent),
+            icon: c.icon,
+            label: (c.name_en + ' ' + Math.round(p.percent) + '%')
+          };
+          if (!byKey[resolved] || dto.percent > byKey[resolved].percent) {
+            byKey[resolved] = dto;
+          }
+        });
+
+        var materials = Object.keys(byKey)
+          .map(function (k) { return byKey[k]; })
+          .sort(function (a, b) { return b.percent - a.percent; });
+
+        var notes = [];
+        if (text && text.trim() && !materials.length) {
+          notes.push('Tip: include a percent sign, e.g. \"80% Cotton 20% Polyester\" or \"棉 65% 聚酯纤维 35%\".');
+        }
+
+        return { materials: materials, notes: notes, normalized_text: normalized };
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -3,9 +3,6 @@ import os
 import sys
 import base64
 import time
-from concurrent.futures import ThreadPoolExecutor
-import threading
-import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -21,10 +18,9 @@ if LOCAL_PACKAGES_DIR.exists():
     sys.path.insert(0, str(LOCAL_PACKAGES_DIR))
 
 try:
-    from rembg import remove, new_session
+    from rembg import remove
 except BaseException:
     remove = None
-    new_session = None
 
 try:
     from fashn_human_parser import FashnHumanParser
@@ -35,11 +31,6 @@ try:
     import numpy as np
 except Exception:
     np = None
-
-try:
-    import cv2
-except Exception:
-    cv2 = None
 
 try:
     import torch
@@ -181,13 +172,9 @@ SUBCATEGORY_TO_CATEGORY = {
     for subcategory in subcategories
 }
 FAST_CLASSIFY_IMAGE_SIDE = 256
-MAX_PREVIEW_WORKERS = max(2, min(6, (os.cpu_count() or 4)))
 
 clip_classifier = None
 clip_text_feature_cache = {}
-rembg_session = None
-preview_cache = {}
-preview_lock = threading.Lock()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
@@ -365,22 +352,6 @@ def get_clip_classifier():
         clip_classifier = create_clip_classifier()
     return clip_classifier
 
-def get_rembg_session():
-    """
-    Lazily creates one reusable rembg session for faster multi-image processing.
-    """
-    global rembg_session
-    if rembg_session is not None:
-        return rembg_session
-    if remove is None or new_session is None:
-        return None
-
-    try:
-        rembg_session = new_session()
-    except Exception:
-        rembg_session = None
-    return rembg_session
-
 def get_clip_text_features(labels_to_prompts):
     """
     Caches CLIP text features to avoid repeated prompt encoding.
@@ -474,19 +445,7 @@ def build_fast_item_crop(input_image):
 
     return image.crop((int(min_x), int(min_y), int(max_x) + 1, int(max_y) + 1))
 
-def run_high_quality_preview_job(preview_token, crop_image, predicted_category):
-    """
-    Background job for generating high-quality preview images.
-    """
-    high_preview = build_high_quality_preview(crop_image, predicted_category)
-    encoded = image_to_data_url(high_preview, max_side=320)
-    with preview_lock:
-        preview_cache[preview_token] = {
-            'ready': True,
-            'preview_image': encoded,
-        }
-
-def classify_images_fast(uploaded_images, preview_mode='fast', defer_high_quality=False):
+def classify_images_fast(uploaded_images):
     """
     Classifies many images with one CLIP batch call for speed.
     """
@@ -498,180 +457,25 @@ def classify_images_fast(uploaded_images, preview_mode='fast', defer_high_qualit
     if not ranked_rows:
         return None, 'CLIP classification model is unavailable.'
 
-    classified_rows = []
+    results = []
     for uploaded, crop, ranked in zip(uploaded_images, crops, ranked_rows):
         ranked.sort(key=lambda result: result[1], reverse=True)
         top_subcategory, top_confidence = ranked[0]
         top_category = SUBCATEGORY_TO_CATEGORY[top_subcategory]
-        classified_rows.append({
+
+        results.append({
             'filename': uploaded['filename'],
+            'ok': True,
             'category': top_category,
             'subcategory': top_subcategory,
             'category_confidence': round(float(top_confidence), 4),
             'subcategory_confidence': round(float(top_confidence), 4),
             'category_source': 'clip_fast',
-            'crop': crop,
+            'all_categories': CATEGORY_TAXONOMY,
+            'preview_image': image_to_data_url(crop, max_side=320),
         })
 
-    def render_preview_payload(row):
-        if preview_mode == 'high' and not defer_high_quality:
-            preview_image = build_high_quality_preview(row['crop'], row['category'])
-            preview_data_url = image_to_data_url(preview_image, max_side=320)
-            preview_token = None
-            preview_ready = True
-        elif preview_mode == 'high' and defer_high_quality:
-            preview_image = build_quick_preview(row['crop'], row['category'])
-            preview_data_url = image_to_data_url(preview_image, max_side=320)
-            preview_token = str(uuid.uuid4())
-            preview_ready = False
-            with preview_lock:
-                preview_cache[preview_token] = {'ready': False}
-            thread = threading.Thread(
-                target=run_high_quality_preview_job,
-                args=(preview_token, row['crop'].copy(), row['category']),
-                daemon=True,
-            )
-            thread.start()
-        else:
-            preview_image = build_quick_preview(row['crop'], row['category'])
-            preview_data_url = image_to_data_url(preview_image, max_side=320)
-            preview_token = None
-            preview_ready = True
-
-        return {
-            'filename': row['filename'],
-            'ok': True,
-            'category': row['category'],
-            'subcategory': row['subcategory'],
-            'category_confidence': row['category_confidence'],
-            'subcategory_confidence': row['subcategory_confidence'],
-            'category_source': row['category_source'],
-            'preview_image': preview_data_url,
-            'preview_token': preview_token,
-            'preview_ready': preview_ready,
-        }
-
-    worker_limit = 2 if preview_mode == 'fast' else MAX_PREVIEW_WORKERS
-    worker_count = min(worker_limit, len(classified_rows))
-    if worker_count <= 1:
-        return [render_preview_payload(row) for row in classified_rows], None
-
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        results = list(executor.map(render_preview_payload, classified_rows))
-
     return results, None
-
-def crop_to_alpha_bounds(image, pad_ratio=0.05):
-    """
-    Crops RGBA image to non-transparent bounds with small padding.
-    """
-    alpha = np.array(image.getchannel('A'))
-    ys, xs = np.where(alpha > 0)
-    if len(xs) == 0 or len(ys) == 0:
-        return image
-
-    min_x, max_x = int(xs.min()), int(xs.max())
-    min_y, max_y = int(ys.min()), int(ys.max())
-    width, height = image.size
-    pad_x = max(2, int((max_x - min_x + 1) * pad_ratio))
-    pad_y = max(2, int((max_y - min_y + 1) * pad_ratio))
-
-    left = max(0, min_x - pad_x)
-    top = max(0, min_y - pad_y)
-    right = min(width, max_x + pad_x + 1)
-    bottom = min(height, max_y + pad_y + 1)
-    return image.crop((left, top, right, bottom))
-
-def build_quick_preview(crop_image, predicted_category=None):
-    """
-    Fast preview path for batch mode with strict latency budgets.
-    """
-    image = crop_image.convert('RGBA').copy()
-    image.thumbnail((256, 256))
-
-    if np is None or cv2 is None:
-        return image
-
-    rgb = np.array(image.convert('RGB'))
-    height, width = rgb.shape[:2]
-    if height < 16 or width < 16:
-        return image
-
-    trim_x = max(1, int(width * 0.02))
-    trim_y = max(1, int(height * 0.02))
-    if width - 2 * trim_x > 8 and height - 2 * trim_y > 8:
-        rgb = rgb[trim_y:height - trim_y, trim_x:width - trim_x]
-        height, width = rgb.shape[:2]
-
-    edge_pixels = np.concatenate((
-        rgb[0, :, :],
-        rgb[-1, :, :],
-        rgb[:, 0, :],
-        rgb[:, -1, :],
-    ), axis=0).astype(np.int16)
-    bg_color = np.median(edge_pixels, axis=0)
-    color_distance = np.max(np.abs(rgb.astype(np.int16) - bg_color), axis=2)
-    channel_spread = rgb.max(axis=2) - rgb.min(axis=2)
-
-    mask = np.full((height, width), cv2.GC_PR_BGD, np.uint8)
-    sure_bg = (color_distance <= 24) | ((channel_spread <= 14) & (color_distance <= 30))
-    mask[sure_bg] = cv2.GC_BGD
-
-    center_margin_x = max(8, int(width * 0.22))
-    center_margin_y = max(8, int(height * 0.22))
-    mask[
-        center_margin_y:height - center_margin_y,
-        center_margin_x:width - center_margin_x
-    ] = cv2.GC_PR_FGD
-
-    margin_x = max(6, int(width * 0.06))
-    margin_y = max(6, int(height * 0.06))
-    rect = (margin_x, margin_y, max(1, width - 2 * margin_x), max(1, height - 2 * margin_y))
-    bgd_model = np.zeros((1, 65), np.float64)
-    fgd_model = np.zeros((1, 65), np.float64)
-
-    try:
-        cv2.grabCut(rgb, mask, rect, bgd_model, fgd_model, 1, cv2.GC_INIT_WITH_MASK)
-    except Exception:
-        return image
-
-    foreground = (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD)
-    if int(foreground.sum()) < 80:
-        return image
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground.astype(np.uint8), connectivity=8)
-    if num_labels <= 1:
-        return image
-    largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    foreground = labels == largest_idx
-
-    alpha = np.zeros((height, width), dtype=np.uint8)
-    alpha[foreground] = 255
-    rgba = np.dstack((rgb, alpha))
-    preview = Image.fromarray(rgba, mode='RGBA')
-    return crop_to_alpha_bounds(preview)
-
-def build_high_quality_preview(crop_image, predicted_category=None):
-    """
-    Builds transparent preview with quality-first fallback chain.
-    1) rembg (best quality in this project)
-    2) lightweight GrabCut fallback
-    """
-    image = crop_image.convert('RGBA').copy()
-    image.thumbnail((320, 320))
-
-    if remove is not None:
-        try:
-            session = get_rembg_session()
-            removed = remove(image, session=session) if session is not None else remove(image)
-            if isinstance(removed, Image.Image):
-                return crop_to_alpha_bounds(removed.convert('RGBA'))
-            decoded = Image.open(io.BytesIO(removed)).convert('RGBA')
-            return crop_to_alpha_bounds(decoded)
-        except Exception:
-            pass
-
-    return build_quick_preview(image, predicted_category)
 
 def is_likely_skin(r, g, b, a):
     if a == 0:
@@ -1397,15 +1201,7 @@ def extract_items():
     if error:
         return error
 
-    preview_mode = request.form.get('preview_mode', 'high').strip().lower()
-    if preview_mode not in {'fast', 'high'}:
-        preview_mode = 'fast'
-
-    results, classify_error = classify_images_fast(
-        uploaded_images,
-        preview_mode=preview_mode,
-        defer_high_quality=(preview_mode == 'high'),
-    )
+    results, classify_error = classify_images_fast(uploaded_images)
     if classify_error:
         return jsonify({'error': classify_error}), 503
 
@@ -1415,7 +1211,6 @@ def extract_items():
         'failed': 0,
         'success': len(results),
         'has_error': False,
-        'preview_mode': preview_mode,
         'processing_ms': int((time.perf_counter() - started_at) * 1000),
         'all_categories': CATEGORY_TAXONOMY,
     })
@@ -1430,41 +1225,17 @@ def extract_item():
     if error:
         return error
 
-    preview_mode = request.form.get('preview_mode', 'high').strip().lower()
-    if preview_mode not in {'fast', 'high'}:
-        preview_mode = 'high'
-
     results, classify_error = classify_images_fast([{
         'filename': 'single_upload',
         'image': input_image,
-    }], preview_mode=preview_mode, defer_high_quality=False)
+    }])
     if classify_error or not results:
         return jsonify({'error': classify_error or 'Failed to classify image.'}), 503
 
     return jsonify({
         'ok': True,
         **results[0],
-        'preview_mode': preview_mode,
         'processing_ms': int((time.perf_counter() - started_at) * 1000),
-    })
-
-@app.route('/preview-result/<preview_token>', methods=['GET'])
-def preview_result(preview_token):
-    """
-    Returns asynchronous high-quality preview generation result.
-    """
-    with preview_lock:
-        data = preview_cache.get(preview_token)
-
-    if data is None:
-        return jsonify({'error': 'Preview token not found.'}), 404
-
-    if not data.get('ready'):
-        return jsonify({'ready': False})
-
-    return jsonify({
-        'ready': True,
-        'preview_image': data.get('preview_image'),
     })
 
 if __name__ == '__main__':
