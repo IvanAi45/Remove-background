@@ -155,7 +155,13 @@ for _a, _k in _extra_aliases.items():
 
 def _normalize_ocr_text(text: str) -> str:
     """Normalize whitespace and common OCR quirks."""
-    t = text.replace("\u3000", " ").replace("\uff05", "%")
+    t = text.replace("\u3000", " ").replace("\uff05", "%").replace("°", "%").replace("º", "%")
+    # OCR often confuses O/I/l with 0/1 in percentage numbers.
+    def _fix_pct_digits(match: re.Match[str]) -> str:
+        token = match.group(1)
+        token = token.replace("O", "0").replace("o", "0").replace("I", "1").replace("l", "1")
+        return f"{token}%"
+    t = re.sub(r"([0-9OoilIl]{1,3})\s*%", _fix_pct_digits, t)
     t = re.sub(r"\s+", " ", t)
     return t.strip()
 
@@ -336,7 +342,7 @@ def parse_materials_from_text(text: str) -> list[MaterialItem]:
 
     processed_text, _ = prepare_text_for_parsing(text)
     pairs = _extract_percent_material_pairs(processed_text)
-    by_key: dict[str, MaterialItem] = {}
+    by_key_percent: dict[tuple[str, int], MaterialItem] = {}
 
     for percent, word in pairs:
         # A token may contain multiple words, e.g. "polyester cotton blend".
@@ -354,18 +360,15 @@ def parse_materials_from_text(text: str) -> list[MaterialItem]:
             continue
 
         en, zh, icon = _FABRIC_DEFS[resolved]
-        if resolved in by_key:
-            # Keep the larger percent if duplicates appear (common with repeated lines).
-            if percent > by_key[resolved].percent:
-                by_key[resolved] = MaterialItem(
-                    key=resolved, name_en=en, name_zh=zh, percent=percent, icon=icon
-                )
-        else:
-            by_key[resolved] = MaterialItem(
+        # Keep different percentages for the same material key so nested sections
+        # like shell/lining are not collapsed into a single value.
+        k = (resolved, int(round(percent)))
+        if k not in by_key_percent:
+            by_key_percent[k] = MaterialItem(
                 key=resolved, name_en=en, name_zh=zh, percent=percent, icon=icon
             )
 
-    out = sorted(by_key.values(), key=lambda x: -x.percent)
+    out = sorted(by_key_percent.values(), key=lambda x: -x.percent)
     return out
 
 
@@ -413,6 +416,14 @@ def _score_ocr_candidate(text: str) -> int:
     return pct_hits * 2 + token_hits + parsed_count * 6
 
 
+def _count_parsed_pairs(text: str) -> int:
+    """Count parsed material pairs for OCR early stopping."""
+    try:
+        return len(parse_materials_from_text(text))
+    except Exception:
+        return 0
+
+
 def ocr_label_image_bytes(data: bytes) -> tuple[str, str | None]:
     """
     OCR an image byte buffer and return (text, error_message).
@@ -439,49 +450,89 @@ def ocr_label_image_bytes(data: bytes) -> tuple[str, str | None]:
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         tmp_path = f.name
     try:
-        # Try multi-angle OCR to handle rotated label photos/screenshots.
         variants: list[Image.Image] = [
             proc,
             proc.rotate(90, expand=True),
-            proc.rotate(180, expand=True),
             proc.rotate(270, expand=True),
+            proc.rotate(180, expand=True),
         ]
         best_score = -1
         best_text = ""
+        candidates: list[tuple[int, str]] = []
 
-        # Try language packs + psm settings for dense label text.
-        for v in variants:
-            v.save(tmp_path, format="PNG")
-            for lang in ("eng+spa", "eng+spa+chi_sim", "chi_sim+eng", "eng"):
-                for psm in ("6", "4", "11"):
-                    cmd = [tesseract_cmd, tmp_path, "stdout", "-l", lang, "--psm", psm]
-                    try:
-                        run = subprocess.run(
-                            cmd,
-                            check=False,
-                            capture_output=True,
-                            text=True,
-                            encoding="utf-8",
-                            errors="ignore",
-                        )
-                    except Exception as e:
-                        last_err = str(e)
-                        continue
+        def run_stage(
+            use_variants: list[Image.Image],
+            langs: tuple[str, ...],
+            psms: tuple[str, ...],
+            min_pairs_to_stop: int,
+        ) -> bool:
+            nonlocal best_score, best_text, last_err, candidates
+            for v in use_variants:
+                v.save(tmp_path, format="PNG")
+                for lang in langs:
+                    for psm in psms:
+                        cmd = [tesseract_cmd, tmp_path, "stdout", "-l", lang, "--psm", psm]
+                        try:
+                            run = subprocess.run(
+                                cmd,
+                                check=False,
+                                capture_output=True,
+                                text=True,
+                                encoding="utf-8",
+                                errors="ignore",
+                            )
+                        except Exception as e:
+                            last_err = str(e)
+                            continue
 
-                    out = (run.stdout or "").strip()
-                    if run.returncode != 0:
-                        stderr = (run.stderr or "").strip()
-                        if stderr:
-                            last_err = stderr
-                        continue
-                    if not out:
-                        continue
-                    score = _score_ocr_candidate(out)
-                    if score > best_score:
-                        best_score = score
-                        best_text = out
+                        out = (run.stdout or "").strip()
+                        if run.returncode != 0:
+                            stderr = (run.stderr or "").strip()
+                            if stderr:
+                                last_err = stderr
+                            continue
+                        if not out:
+                            continue
+                        score = _score_ocr_candidate(out)
+                        candidates.append((score, out))
+                        if score > best_score:
+                            best_score = score
+                            best_text = out
+                        if _count_parsed_pairs(out) >= min_pairs_to_stop:
+                            return True
+            return False
+
+        # Fast stage first (significantly reduces average latency).
+        found_enough = run_stage(
+            use_variants=variants[:3],
+            langs=("eng+spa", "eng"),
+            psms=("6",),
+            min_pairs_to_stop=2,
+        )
+        # Wider fallback only when fast stage is insufficient.
+        if not found_enough:
+            run_stage(
+                use_variants=variants,
+                langs=("eng+spa+chi_sim", "chi_sim+eng", "eng+spa", "eng"),
+                psms=("6", "4", "11"),
+                min_pairs_to_stop=1,
+            )
 
         text = best_text
+        # If the best candidate still has too few pairs, merge top candidates to
+        # recover missing percentages from different OCR variants.
+        if _count_parsed_pairs(text) < 2 and candidates:
+            seen: set[str] = set()
+            merged: list[str] = []
+            for _, out in sorted(candidates, key=lambda x: x[0], reverse=True):
+                if out in seen:
+                    continue
+                seen.add(out)
+                merged.append(out)
+                if len(merged) >= 4:
+                    break
+            if merged:
+                text = "\n".join(merged)
 
         if not text.strip() and last_err:
             return "", f"Tesseract OCR failed: {last_err}"
@@ -526,7 +577,7 @@ def analyze_label_image_bytes(data: bytes) -> LabelAnalysisResult:
     """
     notes: list[str] = []
     raw, ocr_err = ocr_label_image_bytes(data)
-    engine = "pytesseract" if raw else None
+    engine = "tesseract_cli" if raw else None
     if ocr_err and not raw:
         notes.append(ocr_err)
     processed_text, translation_applied = prepare_text_for_parsing(raw)
