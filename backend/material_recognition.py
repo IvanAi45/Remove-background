@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from pathlib import Path
 
 
@@ -372,8 +372,8 @@ def parse_materials_from_text(text: str) -> list[MaterialItem]:
     return out
 
 
-def _preprocess_for_ocr(img: Image.Image, max_side: int = 2000) -> Image.Image:
-    """Basic OCR preprocessing (resize + contrast) for label photos."""
+def _resize_for_ocr_rgb(img: Image.Image, max_side: int = 2000) -> Image.Image:
+    """Resize RGB so small labels are upscaled and huge photos are downscaled."""
     im = img.convert("RGB")
     w, h = im.size
     scale = min(1.0, max_side / max(w, h))
@@ -382,10 +382,187 @@ def _preprocess_for_ocr(img: Image.Image, max_side: int = 2000) -> Image.Image:
     if scale != 1.0:
         nw, nh = int(w * scale), int(h * scale)
         im = im.resize((nw, nh), Image.Resampling.LANCZOS)
-    gray = ImageOps.grayscale(im)
+    return im
+
+
+def _gray_standard(rgb: Image.Image) -> Image.Image:
+    """Baseline grayscale pipeline (good for scans and clean photos)."""
+    gray = ImageOps.grayscale(rgb)
     gray = ImageOps.autocontrast(gray, cutoff=1)
-    gray = ImageEnhance.Contrast(gray).enhance(1.35)
-    return gray
+    return ImageEnhance.Contrast(gray).enhance(1.35)
+
+
+def _gray_photo_median(rgb: Image.Image) -> Image.Image:
+    """
+    Grayscale tuned for real photos: thin fabric show-through, glare, moire.
+
+    Median filter suppresses high-frequency bleed-through and pepper noise.
+    """
+    gray = ImageOps.grayscale(rgb)
+    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    gray = ImageOps.autocontrast(gray, cutoff=3)
+    return ImageEnhance.Contrast(gray).enhance(1.45)
+
+
+def _gray_otsu_binarize(gray: Image.Image) -> Image.Image | None:
+    """Global Otsu binarization (helps when background is uneven)."""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    arr = np.asarray(gray, dtype=np.uint8)
+    hist = np.bincount(arr.ravel(), minlength=256).astype(np.float64)
+    p = hist / max(arr.size, 1)
+    omega = np.cumsum(p)
+    mu = np.cumsum(p * np.arange(256))
+    mu_t = mu[-1]
+    denom = omega * (1.0 - omega)
+    denom[denom == 0] = np.nan
+    sigma_b = (mu_t * omega - mu) ** 2 / denom
+    t = int(np.nanargmax(sigma_b))
+    bin_arr = np.where(arr > t, 255, 0).astype(np.uint8)
+    return Image.fromarray(bin_arr, mode="L")
+
+
+def _gray_opencv_adaptive(rgb: Image.Image) -> Image.Image | None:
+    """Optional OpenCV adaptive threshold (strong on uneven lighting)."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    bgr = cv2.cvtColor(np.asarray(rgb.convert("RGB"), dtype=np.uint8), cv2.COLOR_RGB2BGR)
+    g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    g = cv2.bilateralFilter(g, d=7, sigmaColor=55, sigmaSpace=55)
+    ath = cv2.adaptiveThreshold(
+        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 8
+    )
+    return Image.fromarray(ath, mode="L")
+
+
+def _scanify_with_opencv(rgb: Image.Image) -> Image.Image | None:
+    """
+    Try document-style perspective correction (scan conversion).
+
+    This is most useful for real photos with perspective skew. For already-flat
+    scans it usually returns None quickly and we fall back to the original image.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    arr = np.asarray(rgb.convert("RGB"), dtype=np.uint8)
+    h, w = arr.shape[:2]
+    if min(h, w) < 240:
+        return None
+
+    # Work on a smaller proxy for speed.
+    max_dim = 900
+    scale = max(h, w) / max_dim if max(h, w) > max_dim else 1.0
+    sh, sw = int(h / scale), int(w / scale)
+    small = cv2.resize(arr, (sw, sh), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edge = cv2.Canny(blur, 50, 150)
+    edge = cv2.dilate(edge, np.ones((3, 3), np.uint8), iterations=1)
+
+    contours, _ = cv2.findContours(edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    def area(c):
+        return float(cv2.contourArea(c))
+
+    target = None
+    img_area = float(sw * sh)
+    for c in sorted(contours, key=area, reverse=True)[:12]:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        if len(approx) != 4:
+            continue
+        a = area(approx)
+        if a < img_area * 0.08:
+            continue
+        target = approx.reshape(4, 2).astype(np.float32)
+        break
+    if target is None:
+        return None
+
+    # Order points TL, TR, BR, BL.
+    pts = target
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).reshape(-1)
+    tl = pts[np.argmin(s)]
+    br = pts[np.argmax(s)]
+    tr = pts[np.argmin(d)]
+    bl = pts[np.argmax(d)]
+    src = np.array([tl, tr, br, bl], dtype=np.float32) * float(scale)
+
+    def dist(a, b):
+        return float(np.linalg.norm(a - b))
+
+    width = int(max(dist(src[0], src[1]), dist(src[2], src[3])))
+    height = int(max(dist(src[1], src[2]), dist(src[0], src[3])))
+    if width < 80 or height < 80:
+        return None
+
+    dst = np.array(
+        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+        dtype=np.float32,
+    )
+    m = cv2.getPerspectiveTransform(src, dst)
+    warped = cv2.warpPerspective(arr, m, (width, height), flags=cv2.INTER_LINEAR)
+    return Image.fromarray(warped, mode="RGB")
+
+
+def _build_ocr_gray_variants(img: Image.Image) -> list[Image.Image]:
+    """
+    Build several grayscale images for Tesseract.
+
+    Order matters for speed: simpler variants first; heavy / binary variants
+    are used when the fast OCR pass is weak.
+    """
+    rgb = _resize_for_ocr_rgb(img)
+    variants: list[Image.Image] = []
+    rgb_candidates: list[Image.Image] = []
+
+    # 1) original frame
+    rgb_candidates.append(rgb)
+    # 2) scan-converted frame (if detected)
+    scan_rgb = _scanify_with_opencv(rgb)
+    if scan_rgb is not None:
+        rgb_candidates.append(scan_rgb)
+
+    for rgb_item in rgb_candidates:
+        g0 = _gray_standard(rgb_item)
+        variants.append(g0)
+
+        g1 = _gray_photo_median(rgb_item)
+        if g1.tobytes() != g0.tobytes():
+            variants.append(g1)
+
+        otsu = _gray_otsu_binarize(g0)
+        if otsu is not None:
+            variants.append(otsu)
+
+        cv_bin = _gray_opencv_adaptive(rgb_item)
+        if cv_bin is not None:
+            variants.append(cv_bin)
+
+    return variants
+
+
+def _rotate_variants(gray: Image.Image, angles: tuple[int, ...]) -> list[Image.Image]:
+    """Return rotated copies (0 first) for vertical / skewed label text."""
+    out: list[Image.Image] = []
+    for ang in angles:
+        if ang == 0:
+            out.append(gray)
+        else:
+            out.append(gray.rotate(ang, expand=True, resample=Image.Resampling.BICUBIC))
+    return out
 
 
 def _score_ocr_candidate(text: str) -> int:
@@ -443,76 +620,85 @@ def ocr_label_image_bytes(data: bytes) -> tuple[str, str | None]:
     except Exception as e:
         return "", f"Failed to read image: {e}"
 
-    proc = _preprocess_for_ocr(img)
+    gray_bases = _build_ocr_gray_variants(img)
     text = ""
     last_err: str | None = None
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         tmp_path = f.name
     try:
-        variants: list[Image.Image] = [
-            proc,
-            proc.rotate(90, expand=True),
-            proc.rotate(270, expand=True),
-            proc.rotate(180, expand=True),
-        ]
         best_score = -1
         best_text = ""
         candidates: list[tuple[int, str]] = []
 
         def run_stage(
-            use_variants: list[Image.Image],
+            bases: list[Image.Image],
+            angles: tuple[int, ...],
             langs: tuple[str, ...],
             psms: tuple[str, ...],
             min_pairs_to_stop: int,
         ) -> bool:
             nonlocal best_score, best_text, last_err, candidates
-            for v in use_variants:
-                v.save(tmp_path, format="PNG")
-                for lang in langs:
-                    for psm in psms:
-                        cmd = [tesseract_cmd, tmp_path, "stdout", "-l", lang, "--psm", psm]
-                        try:
-                            run = subprocess.run(
-                                cmd,
-                                check=False,
-                                capture_output=True,
-                                text=True,
-                                encoding="utf-8",
-                                errors="ignore",
-                            )
-                        except Exception as e:
-                            last_err = str(e)
-                            continue
+            for g in bases:
+                for v in _rotate_variants(g, angles):
+                    v.save(tmp_path, format="PNG")
+                    for lang in langs:
+                        for psm in psms:
+                            cmd = [
+                                tesseract_cmd,
+                                tmp_path,
+                                "stdout",
+                                "-l",
+                                lang,
+                                "--oem",
+                                "1",
+                                "--psm",
+                                psm,
+                            ]
+                            try:
+                                run = subprocess.run(
+                                    cmd,
+                                    check=False,
+                                    capture_output=True,
+                                    text=True,
+                                    encoding="utf-8",
+                                    errors="ignore",
+                                )
+                            except Exception as e:
+                                last_err = str(e)
+                                continue
 
-                        out = (run.stdout or "").strip()
-                        if run.returncode != 0:
-                            stderr = (run.stderr or "").strip()
-                            if stderr:
-                                last_err = stderr
-                            continue
-                        if not out:
-                            continue
-                        score = _score_ocr_candidate(out)
-                        candidates.append((score, out))
-                        if score > best_score:
-                            best_score = score
-                            best_text = out
-                        if _count_parsed_pairs(out) >= min_pairs_to_stop:
-                            return True
+                            out = (run.stdout or "").strip()
+                            if run.returncode != 0:
+                                stderr = (run.stderr or "").strip()
+                                if stderr:
+                                    last_err = stderr
+                                continue
+                            if not out:
+                                continue
+                            score = _score_ocr_candidate(out)
+                            candidates.append((score, out))
+                            if score > best_score:
+                                best_score = score
+                                best_text = out
+                            if _count_parsed_pairs(out) >= min_pairs_to_stop:
+                                return True
             return False
 
-        # Fast stage first (significantly reduces average latency).
+        # Fast stage: first 1-2 gray pipelines, common rotations, few Tesseract modes.
+        fast_bases = gray_bases[:2] if len(gray_bases) >= 2 else gray_bases[:1]
         found_enough = run_stage(
-            use_variants=variants[:3],
+            bases=fast_bases,
+            angles=(0, 90, 270),
             langs=("eng+spa", "eng"),
             psms=("6",),
             min_pairs_to_stop=2,
         )
-        # Wider fallback only when fast stage is insufficient.
+        # Wider fallback: all gray variants (including binarization), 180deg, more PSM/lang.
         if not found_enough:
             run_stage(
-                use_variants=variants,
+                bases=gray_bases,
+                angles=(0, 90, 270, 180),
                 langs=("eng+spa+chi_sim", "chi_sim+eng", "eng+spa", "eng"),
                 psms=("6", "4", "11"),
                 min_pairs_to_stop=1,

@@ -113,6 +113,20 @@ Behavior:
 - If OCR text is already English, it goes directly into parsing.
 - Final displayed material labels are always English.
 
+### Real photos vs flat scans
+
+Phone photos are harder than scans because of glare, skew, thin-fabric bleed-through
+(ghost text from the back of the tag), and mixed languages in one frame. The backend
+applies extra preprocessing for photos (denoise, optional Otsu / OpenCV adaptive
+threshold) and only runs the slower OCR modes when the fast pass is weak.
+
+For best results when shooting labels:
+
+- Fill the frame with the tag; avoid screenshots of an entire app or web page.
+- Keep the label flat; shoot straight-on; use even light without hot spots.
+- If text is vertical, rotate the phone so lines are roughly horizontal, or rely on
+  the server trying multiple rotations (slower).
+
 ### Demo dependencies and setup
 
 Install backend dependencies:
