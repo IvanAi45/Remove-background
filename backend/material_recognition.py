@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import os
+from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -199,6 +200,51 @@ def _contains_cjk(text: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
 
 
+# Keep this map at module level so translation does not rebuild it per call.
+_ZH_TO_EN_MAP: dict[str, str] = {
+    "\u805a\u916f\u7ea4\u7ef4": "Polyester",
+    "\u805a\u916f": "Polyester",
+    "\u6da4\u7eb6": "Polyester",
+    "\u7c98\u80f6\u7ea4\u7ef4": "Viscose",
+    "\u7c98\u80f6": "Viscose",
+    "\u7c98\u7ea4": "Viscose",
+    "\u4eba\u9020\u4e1d": "Rayon",
+    "\u9526\u7eb6": "Nylon",
+    "\u5c3c\u9f99": "Nylon",
+    "\u6c28\u7eb6": "Spandex",
+    "\u5f39\u6027\u7ea4\u7ef4": "Elastane",
+    "\u83b1\u5361": "Lycra",
+    "\u8150\u7eb6": "Acrylic",
+    "\u8148\u7eb6": "Acrylic",
+    "\u7f8a\u7ed2": "Cashmere",
+    "\u5f00\u53f8\u7c73": "Cashmere",
+    "\u7f8a\u6bdb": "Wool",
+    "\u771f\u4e1d": "Silk",
+    "\u6851\u8695\u4e1d": "Silk",
+    "\u4e9a\u9ebb": "Linen",
+    "\u82ce\u9ebb": "Linen",
+    "\u9ebb": "Hemp",
+    "\u7af9\u7ea4\u7ef4": "Bamboo fiber",
+    "\u83ab\u4ee3\u5c14": "Modal",
+    "\u918b\u916f\u7ea4\u7ef4": "Acetate",
+    "\u805a\u6c28\u916f": "Polyurethane",
+    "\u7fbd\u7ed2": "Down",
+    "\u767d\u9e2d\u7ed2": "Down",
+    "\u7070\u9e2d\u7ed2": "Down",
+    "\u76ae\u9769": "Leather",
+    "\u771f\u76ae": "Leather",
+    "\u725b\u76ae": "Leather",
+    "\u7f8a\u76ae": "Leather",
+    "\u68c9": "Cotton",
+    "\u7eaf\u68c9": "Cotton",
+    "\u5168\u68c9": "Cotton",
+}
+_ZH_TO_EN_PATTERN = re.compile(
+    "|".join(re.escape(k) for k in sorted(_ZH_TO_EN_MAP.keys(), key=len, reverse=True))
+)
+
+
+@lru_cache(maxsize=2048)
 def translate_zh_to_en(text: str) -> str:
     """
     Translate common Chinese composition tokens into English.
@@ -221,48 +267,8 @@ def translate_zh_to_en(text: str) -> str:
         .replace("\u3001", " ")
     )
 
-    # Translate material words first (longer keys first to avoid partial overlaps).
-    # The keys are unicode-escaped to keep the source ASCII-only.
-    zh_to_en = {
-        "\u805a\u916f\u7ea4\u7ef4": "Polyester",
-        "\u805a\u916f": "Polyester",
-        "\u6da4\u7eb6": "Polyester",
-        "\u7c98\u80f6\u7ea4\u7ef4": "Viscose",
-        "\u7c98\u80f6": "Viscose",
-        "\u7c98\u7ea4": "Viscose",
-        "\u4eba\u9020\u4e1d": "Rayon",
-        "\u9526\u7eb6": "Nylon",
-        "\u5c3c\u9f99": "Nylon",
-        "\u6c28\u7eb6": "Spandex",
-        "\u5f39\u6027\u7ea4\u7ef4": "Elastane",
-        "\u83b1\u5361": "Lycra",
-        "\u8150\u7eb6": "Acrylic",
-        "\u8148\u7eb6": "Acrylic",
-        "\u7f8a\u7ed2": "Cashmere",
-        "\u5f00\u53f8\u7c73": "Cashmere",
-        "\u7f8a\u6bdb": "Wool",
-        "\u771f\u4e1d": "Silk",
-        "\u6851\u8695\u4e1d": "Silk",
-        "\u4e9a\u9ebb": "Linen",
-        "\u82ce\u9ebb": "Linen",
-        "\u9ebb": "Hemp",
-        "\u7af9\u7ea4\u7ef4": "Bamboo fiber",
-        "\u83ab\u4ee3\u5c14": "Modal",
-        "\u918b\u916f\u7ea4\u7ef4": "Acetate",
-        "\u805a\u6c28\u916f": "Polyurethane",
-        "\u7fbd\u7ed2": "Down",
-        "\u767d\u9e2d\u7ed2": "Down",
-        "\u7070\u9e2d\u7ed2": "Down",
-        "\u76ae\u9769": "Leather",
-        "\u771f\u76ae": "Leather",
-        "\u725b\u76ae": "Leather",
-        "\u7f8a\u76ae": "Leather",
-        "\u68c9": "Cotton",
-        "\u7eaf\u68c9": "Cotton",
-        "\u5168\u68c9": "Cotton",
-    }
-    for zh in sorted(zh_to_en.keys(), key=len, reverse=True):
-        t = t.replace(zh, zh_to_en[zh])
+    # One regex pass is faster than dozens of sequential .replace() calls.
+    t = _ZH_TO_EN_PATTERN.sub(lambda m: _ZH_TO_EN_MAP[m.group(0)], t)
 
     # Normalize patterns like: "Cotton 65%" -> "65% Cotton" (English-friendly).
     # Avoid `\b` after `%` because `%` isn't a word character.
@@ -330,23 +336,12 @@ def _extract_percent_material_pairs(text: str) -> list[tuple[float, str]]:
     return pairs
 
 
-def parse_materials_from_text(text: str) -> list[MaterialItem]:
-    """
-    Parse materials & percentages from OCR text or manually provided text.
-
-    If the input is primarily Chinese, we first translate the material tokens
-    into an English-like representation, then continue the normal parsing flow.
-    """
-    if not text or not text.strip():
-        return []
-
-    processed_text, _ = prepare_text_for_parsing(text)
+def _parse_materials_from_processed_text(processed_text: str) -> list[MaterialItem]:
+    """Parse percentages/materials from already prepared English-like text."""
     pairs = _extract_percent_material_pairs(processed_text)
     by_key_percent: dict[tuple[str, int], MaterialItem] = {}
 
     for percent, word in pairs:
-        # A token may contain multiple words, e.g. "polyester cotton blend".
-        # We pick the first resolvable fragment.
         parts = re.split(r"[/+\s]+", word)
         resolved = None
         for part in parts:
@@ -360,16 +355,26 @@ def parse_materials_from_text(text: str) -> list[MaterialItem]:
             continue
 
         en, zh, icon = _FABRIC_DEFS[resolved]
-        # Keep different percentages for the same material key so nested sections
-        # like shell/lining are not collapsed into a single value.
         k = (resolved, int(round(percent)))
         if k not in by_key_percent:
             by_key_percent[k] = MaterialItem(
                 key=resolved, name_en=en, name_zh=zh, percent=percent, icon=icon
             )
+    return sorted(by_key_percent.values(), key=lambda x: -x.percent)
 
-    out = sorted(by_key_percent.values(), key=lambda x: -x.percent)
-    return out
+
+def parse_materials_from_text(text: str) -> list[MaterialItem]:
+    """
+    Parse materials & percentages from OCR text or manually provided text.
+
+    If the input is primarily Chinese, we first translate the material tokens
+    into an English-like representation, then continue the normal parsing flow.
+    """
+    if not text or not text.strip():
+        return []
+
+    processed_text, _ = prepare_text_for_parsing(text)
+    return _parse_materials_from_processed_text(processed_text)
 
 
 def _resize_for_ocr_rgb(img: Image.Image, max_side: int = 2000) -> Image.Image:
@@ -586,7 +591,7 @@ def _score_ocr_candidate(text: str) -> int:
         if alias in lower:
             token_hits += 1
     try:
-        parsed_count = len(parse_materials_from_text(t))
+        parsed_count = len(_parse_materials_from_processed_text(_normalize_ocr_text(t)))
     except Exception:
         parsed_count = 0
     # parsed_count weighted heavily because it is the end goal.
@@ -596,7 +601,7 @@ def _score_ocr_candidate(text: str) -> int:
 def _count_parsed_pairs(text: str) -> int:
     """Count parsed material pairs for OCR early stopping."""
     try:
-        return len(parse_materials_from_text(text))
+        return len(_parse_materials_from_processed_text(_normalize_ocr_text(text)))
     except Exception:
         return 0
 
@@ -767,7 +772,7 @@ def analyze_label_image_bytes(data: bytes) -> LabelAnalysisResult:
     if ocr_err and not raw:
         notes.append(ocr_err)
     processed_text, translation_applied = prepare_text_for_parsing(raw)
-    materials = parse_materials_from_text(raw)
+    materials = _parse_materials_from_processed_text(processed_text)
     if raw and not materials:
         notes.append(
             "No composition pairs found. Try a closer photo of the composition lines, "
@@ -788,7 +793,7 @@ def analyze_label_image_bytes(data: bytes) -> LabelAnalysisResult:
 def analyze_from_text_only(text: str) -> LabelAnalysisResult:
     """Skip OCR and only run translation+parsing (demo/testing)."""
     processed_text, translation_applied = prepare_text_for_parsing(text)
-    materials = parse_materials_from_text(text)
+    materials = _parse_materials_from_processed_text(processed_text)
     notes: list[str] = []
     if text.strip() and not materials:
         notes.append(
