@@ -1,15 +1,19 @@
-# Clothing Extractor
+# Digital Wardrobe + Virtual Try-On
 
-This is a small school project for extracting clothing items from a person image.
-The backend uses a human parsing model to keep clothing pixels, such as tops,
-pants, skirts, dresses, hats, scarves, and belts, while removing background and
-non-clothing body parts.
+This is a school project for building a local digital wardrobe. It can classify
+uploaded clothing images into wardrobe sections, save them in the browser, and
+run virtual try-on for supported clothing items.
 
-The app currently supports two output styles:
+The project currently supports:
 
-- `Extract Clothes`: keeps all detected clothing in one transparent PNG
-- `Classify Single Item`: validates one uploaded clothing item and classifies it
-  into upper body, lower body, or footwear with a detailed subtype
+- Batch clothing classification into `Upper Body`, `Lower Body`, and `Footwear`
+- Browser-local wardrobe storage with category shelves
+- Person-photo upload for try-on
+- Virtual try-on from wardrobe items using FASHN VTON v1.5
+- Try-on support for upper-body and lower-body garments
+
+Footwear can be stored in the wardrobe, but shoe try-on is not supported by the
+current FASHN VTON model.
 
 ## Project Structure
 
@@ -17,9 +21,11 @@ The app currently supports two output styles:
 clothing-remover/
   backend/
     app.py
+    download_tryon_weights.py
     requirements.txt
     models/
       fashn-human-parser/
+      fashn-vton-1.5/
   frontend/
     index.html
 ```
@@ -28,8 +34,9 @@ clothing-remover/
 
 - Python 3.10 or newer
 - Tested locally with Python 3.12
-- Internet access for the first run, because the model weights are downloaded
-  from Hugging Face automatically
+- NVIDIA GPU is recommended for virtual try-on
+- Internet access for first setup, because model packages and weights are
+  downloaded from GitHub and Hugging Face
 
 ## Setup
 
@@ -52,7 +59,23 @@ Install the backend dependencies with the virtual environment Python:
 ```
 
 The first installation can take a while because it installs PyTorch and image
-processing libraries.
+processing libraries. If your team is using CUDA, install the CUDA-enabled
+PyTorch wheel that matches the local machine before running try-on.
+
+Download the FASHN VTON try-on weights into the project:
+
+```powershell
+.\.venv\Scripts\python.exe backend\download_tryon_weights.py
+```
+
+The weights are saved under:
+
+```text
+backend/models/fashn-vton-1.5/weights/
+```
+
+The `models/` directory is intentionally ignored by Git because the model files
+are large.
 
 ## Run The Backend
 
@@ -62,42 +85,31 @@ From the project folder, run:
 .\.venv\Scripts\python.exe backend\app.py
 ```
 
-The deployed API server is:
+Open the app:
 
 ```text
-https://lizzjin-wearimpact-classifier.hf.space
+http://127.0.0.1:5000/
 ```
 
-The first image extraction or first classification may be slow because the app
-may download model weights from Hugging Face on first use. After that, the
-models are cached locally.
-
-If the model has already been downloaded manually, it can be stored in:
+Check backend status:
 
 ```text
-backend/models/fashn-human-parser/
+http://127.0.0.1:5000/health
 ```
 
-The classification flow also uses this Hugging Face model:
+## Run The Workflow
 
-```text
-openai/clip-vit-base-patch32
-```
+1. Upload one or more clothing images.
+2. Click `Classify Batch Images`.
+3. The detected items are saved into `My Wardrobe`.
+4. Upload a person photo in `Person Photo For Try-On`.
+5. Click `Try On` on an upper-body or lower-body wardrobe item.
+6. The generated result appears in the `Virtual Try-On` section.
 
 ## Run The Frontend
 
-Open this file in a browser:
-
-```text
-frontend/index.html
-```
-
-Then upload an image and choose one of these actions:
-
-- **Extract Clothes**: returns one transparent PNG containing all detected
-  clothing
-- **Classify Single Item**: accepts only one clothing item per upload and returns
-  category + subtype classification result
+You normally do not need to open `frontend/index.html` directly. The Flask
+backend serves it from `http://127.0.0.1:5000/`.
 
 ## API
 
@@ -184,16 +196,31 @@ Footwear subcategories:
 
 This older endpoint removes the background only.
 
+### `POST /try-on`
+
+Form data:
+
+- `person`: person photo file
+- `garment_image`: wardrobe item image as a data URL
+- `category`: wardrobe category, such as `upper_body` or `lower_body`
+- `subcategory`: wardrobe subcategory
+
+Response:
+
+- JSON with `result_image`, a data URL containing the generated try-on image
+
 ## Notes
 
 - The extracted result is a transparent PNG.
 - The frontend displays the result on a warm wardrobe-style card background.
-- This project is intended for clothing extraction, fashion organization, and
-  electronic wardrobe use cases.
+- This project is intended for clothing extraction, fashion organization,
+  electronic wardrobe, and virtual try-on demo use cases.
 - It does not generate or infer hidden body content.
 - `Classify Single Item` requires exactly one major clothing item in the image.
 - Classification uses a zero-shot CLIP classifier; quality depends on image
   clarity, camera angle, and whether the garment occupies most of the frame.
+- FASHN VTON v1.5 supports `tops`, `bottoms`, and `one-pieces`; it does not
+  support footwear try-on.
 
 ## Model Credit
 
@@ -205,9 +232,13 @@ No paid API key is required. The model runs locally after installation. On the
 first run, the model weights are downloaded automatically from Hugging Face and
 cached on the user's computer.
 
-This project also uses `rembg` for the background-removal endpoint:
+The older `/remove-bg` endpoint can use `rembg` if you install it separately:
 
 https://github.com/danielgatis/rembg
+
+This project uses FASHN VTON v1.5 for virtual try-on:
+
+https://github.com/fashn-AI/fashn-vton-1.5
 
 This project is for school project / demo use. If the project is later used for
 commercial purposes, review the model license before deployment.
