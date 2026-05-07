@@ -77,6 +77,14 @@
       margin-bottom: 16px;
     }
 
+    .tryon-controls {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
     .file-input {
       max-width: 100%;
     }
@@ -188,6 +196,25 @@
       display: block;
     }
 
+    .person-preview {
+      display: grid;
+      place-items: center;
+      min-height: 220px;
+      padding: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 18px;
+      background: rgba(255, 251, 245, 0.62);
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .person-preview img {
+      max-width: 100%;
+      max-height: 260px;
+      border-radius: 14px;
+      object-fit: contain;
+    }
+
     .card-body {
       padding: 16px 16px 18px;
     }
@@ -221,6 +248,30 @@
       gap: 10px;
       flex-wrap: wrap;
       margin-top: 16px;
+    }
+
+    .tryon-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .tryon-card {
+      border-radius: 18px;
+      background: rgba(255, 251, 245, 0.82);
+      border: 1px solid var(--line);
+      padding: 14px;
+      min-height: 280px;
+    }
+
+    .tryon-card .preview {
+      min-height: 220px;
+      border-radius: 14px;
+    }
+
+    .tryon-card h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
     }
 
     .wardrobe-shelves {
@@ -361,7 +412,8 @@
 
     @media (max-width: 980px) {
       .hero,
-      .summary-panel {
+      .summary-panel,
+      .tryon-board {
         grid-template-columns: 1fr;
       }
 
@@ -401,6 +453,12 @@
           <input class="file-input" type="file" id="fileInput" accept="image/*" multiple />
           <button id="classifyButton" onclick="classifyBatchImages()">Classify Batch Images</button>
           <button class="ghost" onclick="clearWardrobe()">Clear Wardrobe</button>
+        </div>
+
+        <div class="tryon-controls">
+          <strong>Person Photo For Try-On</strong>
+          <input class="file-input" type="file" id="personTryOnInput" accept="image/*" />
+          <div id="personTryOnPreview" class="person-preview">Select a person photo before trying on wardrobe items.</div>
         </div>
 
         <p id="statusLine" class="status">Select one or more clothing images to begin.</p>
@@ -488,11 +546,36 @@
         </div>
       </div>
     </section>
+
+    <section>
+      <div class="section-heading">
+        <h2>Virtual Try-On</h2>
+      </div>
+      <div class="panel">
+        <div id="tryOnBoard" class="tryon-board">
+          <article class="tryon-card">
+            <h3>Person Photo</h3>
+            <div id="tryOnPersonSlot" class="preview">Choose a person photo above.</div>
+          </article>
+          <article class="tryon-card">
+            <h3>Wardrobe Item</h3>
+            <div id="tryOnGarmentSlot" class="preview">Click Try On from an upper-body or lower-body wardrobe item.</div>
+          </article>
+          <article class="tryon-card">
+            <h3>Try-On Result</h3>
+            <div id="tryOnResultSlot" class="preview">The generated result will appear here.</div>
+          </article>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script>
+    const API_BASE_URL = "http://127.0.0.1:5000";
     const WARDROBE_STORAGE_KEY = "digital_wardrobe_items";
     let latestResults = [];
+    let selectedPersonFile = null;
+    let selectedPersonPreview = "";
 
     function getSelectedFiles() {
       const fileInput = document.getElementById("fileInput");
@@ -513,6 +596,15 @@
         formData.append(key, value);
       });
       return formData;
+    }
+
+    function setImageSlot(elementId, imageSrc, altText) {
+      const slot = document.getElementById(elementId);
+      slot.innerHTML = "";
+      const image = document.createElement("img");
+      image.src = imageSrc;
+      image.alt = altText;
+      slot.appendChild(image);
     }
 
     function setStatus(message) {
@@ -717,6 +809,7 @@
     function createWardrobeCard(item) {
       const wrapper = document.createElement("article");
       wrapper.className = "wardrobe-item";
+      const canTryOn = item.category === "upper_body" || item.category === "lower_body";
       wrapper.innerHTML = `
         <button class="remove-badge" type="button" data-role="remove-item" aria-label="Remove item">-</button>
         <div class="preview">
@@ -728,11 +821,18 @@
             <span class="chip">${formatCategory(item.category)}</span>
             <span class="chip">${formatCategory(item.subcategory)}</span>
           </div>
+          <div class="card-actions">
+            <button class="secondary" type="button" data-role="try-on" ${canTryOn ? "" : "disabled"}>Try On</button>
+          </div>
         </div>
       `;
 
       wrapper.querySelector('[data-role="remove-item"]').addEventListener("click", () => {
         removeWardrobeItem(item.id);
+      });
+
+      wrapper.querySelector('[data-role="try-on"]').addEventListener("click", () => {
+        runTryOn(item);
       });
 
       return wrapper;
@@ -779,7 +879,7 @@
       setStatus(`Classifying ${files.length} image(s)...`);
 
       try {
-        const response = await fetch("http://127.0.0.1:5000/extract-items", {
+        const response = await fetch(`${API_BASE_URL}/extract-items`, {
           method: "POST",
           body: buildFormData(files, { preview_mode: "high" })
         });
@@ -817,7 +917,7 @@
     async function pollPreviewResult(previewToken, imageElement, result) {
       for (let attempt = 0; attempt < 40; attempt += 1) {
         try {
-          const response = await fetch(`http://127.0.0.1:5000/preview-result/${previewToken}`);
+          const response = await fetch(`${API_BASE_URL}/preview-result/${previewToken}`);
           if (!response.ok) {
             return;
           }
@@ -837,6 +937,72 @@
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
+
+    async function runTryOn(item) {
+      if (!selectedPersonFile) {
+        alert("Please choose a person photo first.");
+        return;
+      }
+
+      if (item.category !== "upper_body" && item.category !== "lower_body") {
+        alert("This try-on model supports upper-body and lower-body wardrobe items only.");
+        return;
+      }
+
+      setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
+      setImageSlot("tryOnGarmentSlot", item.preview_image, item.filename);
+      document.getElementById("tryOnResultSlot").textContent = "Generating try-on result. This can take a few minutes...";
+      setStatus(`Generating try-on for ${item.filename}...`);
+
+      const formData = new FormData();
+      formData.append("person", selectedPersonFile);
+      formData.append("garment_image", item.preview_image);
+      formData.append("category", item.category);
+      formData.append("subcategory", item.subcategory || "");
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/try-on`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          alert(error?.error || "Try-on failed.");
+          document.getElementById("tryOnResultSlot").textContent = "Try-on failed.";
+          setStatus("Try-on failed.");
+          return;
+        }
+
+        const data = await response.json();
+        setImageSlot("tryOnResultSlot", data.result_image, "Virtual try-on result");
+        setStatus(`Try-on complete in ${data.processing_ms} ms.`);
+      } catch (error) {
+        console.error(error);
+        alert("Something went wrong while generating try-on.");
+        document.getElementById("tryOnResultSlot").textContent = "Try-on failed.";
+        setStatus("Unexpected error while generating try-on.");
+      }
+    }
+
+    document.getElementById("personTryOnInput").addEventListener("change", (event) => {
+      selectedPersonFile = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+      selectedPersonPreview = "";
+
+      if (!selectedPersonFile) {
+        document.getElementById("personTryOnPreview").textContent = "Select a person photo before trying on wardrobe items.";
+        document.getElementById("tryOnPersonSlot").textContent = "Choose a person photo above.";
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        selectedPersonPreview = reader.result;
+        setImageSlot("personTryOnPreview", selectedPersonPreview, "Person photo preview");
+        setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
+      });
+      reader.readAsDataURL(selectedPersonFile);
+    });
 
     renderWardrobe();
   </script>

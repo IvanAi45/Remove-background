@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import unquote
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
@@ -16,9 +17,21 @@ BASE_DIR = Path(__file__).resolve().parent
 LOCAL_PACKAGES_DIR = BASE_DIR / ".packages"
 LOCAL_MODEL_DIR = BASE_DIR / "models" / "fashn-human-parser"
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
+FASHN_VTON_DIR = Path(os.environ.get(
+    "FASHN_VTON_DIR",
+    str(BASE_DIR / "models" / "fashn-vton-1.5"),
+)).resolve()
+FASHN_VTON_SRC_DIR = FASHN_VTON_DIR / "src"
+FASHN_VTON_WEIGHTS_DIR = Path(os.environ.get(
+    "FASHN_VTON_WEIGHTS_DIR",
+    str(FASHN_VTON_DIR / "weights"),
+)).resolve()
 
 if LOCAL_PACKAGES_DIR.exists():
     sys.path.insert(0, str(LOCAL_PACKAGES_DIR))
+
+if FASHN_VTON_SRC_DIR.exists():
+    sys.path.insert(0, str(FASHN_VTON_SRC_DIR))
 
 try:
     from rembg import remove, new_session
@@ -188,6 +201,8 @@ clip_text_feature_cache = {}
 rembg_session = None
 preview_cache = {}
 preview_lock = threading.Lock()
+tryon_pipeline = None
+tryon_lock = threading.Lock()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
@@ -343,6 +358,71 @@ def image_to_data_url(image, max_side=320):
     image.save(img_io, format='PNG')
     encoded = base64.b64encode(img_io.getvalue()).decode('ascii')
     return f'data:image/png;base64,{encoded}'
+
+def data_url_to_image(data_url):
+    """
+    Decodes a browser data URL into a PIL image.
+    """
+    if not data_url or ',' not in data_url:
+        return None
+
+    header, encoded = data_url.split(',', 1)
+    if not header.lower().startswith('data:image/'):
+        return None
+
+    try:
+        raw = base64.b64decode(unquote(encoded))
+        return Image.open(io.BytesIO(raw)).convert('RGBA')
+    except Exception:
+        return None
+
+def flatten_transparency(image, background=(255, 255, 255)):
+    """
+    FASHN VTON expects regular RGB images, so transparent wardrobe PNGs are
+    composited over white like product photos.
+    """
+    rgba = image.convert('RGBA')
+    canvas = Image.new('RGBA', rgba.size, (*background, 255))
+    canvas.alpha_composite(rgba)
+    return canvas.convert('RGB')
+
+def map_wardrobe_category_to_tryon(category, subcategory):
+    if category == 'upper_body':
+        if subcategory == 'dress':
+            return 'one-pieces'
+        return 'tops'
+    if category == 'lower_body':
+        if subcategory in {'mini_skirt', 'maxi_skirt', 'pleated_skirt'}:
+            return 'bottoms'
+        return 'bottoms'
+    return None
+
+def get_tryon_pipeline():
+    """
+    Lazily loads FASHN VTON from the sibling Desktop folder.
+    """
+    global tryon_pipeline
+    if tryon_pipeline is not None:
+        return tryon_pipeline, None
+
+    if not FASHN_VTON_WEIGHTS_DIR.exists():
+        return None, f'FASHN VTON weights were not found at {FASHN_VTON_WEIGHTS_DIR}.'
+
+    try:
+        from fashn_vton import TryOnPipeline
+    except Exception as exc:
+        return None, f'FASHN VTON package is unavailable: {exc}'
+
+    try:
+        with tryon_lock:
+            if tryon_pipeline is None:
+                tryon_pipeline = TryOnPipeline(
+                    weights_dir=str(FASHN_VTON_WEIGHTS_DIR),
+                    device='cuda' if torch is not None and torch.cuda.is_available() else None,
+                )
+        return tryon_pipeline, None
+    except Exception as exc:
+        return None, f'Failed to load FASHN VTON: {exc}'
 
 def create_clip_classifier():
     if torch is None or CLIPModel is None or CLIPProcessor is None:
@@ -1466,6 +1546,66 @@ def preview_result(preview_token):
         'ready': True,
         'preview_image': data.get('preview_image'),
     })
+
+@app.route('/try-on', methods=['POST'])
+def try_on():
+    """
+    Runs FASHN VTON with a person photo and a wardrobe item data URL.
+    """
+    if 'person' not in request.files:
+        return jsonify({'error': 'Missing person photo field named "person".'}), 400
+
+    person_file = request.files['person']
+    if not person_file or person_file.filename == '':
+        return jsonify({'error': 'No person photo selected.'}), 400
+
+    if not is_allowed_file(person_file.filename):
+        return jsonify({'error': 'Unsupported person photo type.'}), 400
+
+    garment_data_url = request.form.get('garment_image', '')
+    garment_category = request.form.get('category', '')
+    garment_subcategory = request.form.get('subcategory', '')
+    tryon_category = map_wardrobe_category_to_tryon(garment_category, garment_subcategory)
+    if tryon_category is None:
+        return jsonify({
+            'error': 'This wardrobe item cannot be tried on. FASHN VTON supports upper-body, lower-body, and one-piece clothing only.'
+        }), 400
+
+    garment_image = data_url_to_image(garment_data_url)
+    if garment_image is None:
+        return jsonify({'error': 'Missing or invalid wardrobe garment image.'}), 400
+
+    pipeline, pipeline_error = get_tryon_pipeline()
+    if pipeline_error:
+        return jsonify({'error': pipeline_error}), 503
+
+    try:
+        person_image = Image.open(person_file.stream).convert('RGB')
+    except Exception:
+        return jsonify({'error': 'Uploaded person photo is not a valid image.'}), 400
+
+    try:
+        started_at = time.perf_counter()
+        result = pipeline(
+            person_image=person_image,
+            garment_image=flatten_transparency(garment_image),
+            category=tryon_category,
+            garment_photo_type='flat-lay',
+            num_samples=1,
+            num_timesteps=20,
+            guidance_scale=1.5,
+            seed=42,
+            segmentation_free=True,
+        )
+        output = result.images[0].convert('RGB')
+        return jsonify({
+            'ok': True,
+            'category': tryon_category,
+            'result_image': image_to_data_url(output, max_side=None),
+            'processing_ms': int((time.perf_counter() - started_at) * 1000),
+        })
+    except Exception as exc:
+        return jsonify({'error': f'Try-on generation failed: {exc}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
