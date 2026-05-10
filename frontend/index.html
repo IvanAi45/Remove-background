@@ -215,6 +215,55 @@
       object-fit: contain;
     }
 
+    .model-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .model-tab {
+      padding: 9px 14px;
+      background: rgba(141, 91, 61, 0.12);
+      color: var(--accent-dark);
+    }
+
+    .model-tab.is-active {
+      background: var(--accent);
+      color: #fffaf3;
+    }
+
+    .model-gallery {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .model-card {
+      display: grid;
+      place-items: center;
+      min-height: 132px;
+      padding: 8px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 245, 0.62);
+    }
+
+    .model-card.is-selected {
+      outline: 3px solid rgba(141, 91, 61, 0.42);
+      background: rgba(255, 251, 245, 0.95);
+    }
+
+    .model-card:hover {
+      background: rgba(255, 251, 245, 0.95);
+    }
+
+    .model-card img {
+      width: 100%;
+      height: 120px;
+      object-fit: contain;
+      border-radius: 12px;
+    }
+
     .card-body {
       padding: 16px 16px 18px;
     }
@@ -462,6 +511,10 @@
       .wardrobe-viewport {
         --wardrobe-items-per-page: 2;
       }
+
+      .model-gallery {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
   </style>
 </head>
@@ -482,9 +535,10 @@
         </div>
 
         <div class="tryon-controls">
-          <strong>Person Photo For Try-On</strong>
-          <input class="file-input" type="file" id="personTryOnInput" accept="image/*" />
-          <div id="personTryOnPreview" class="person-preview">Select a person photo before trying on wardrobe items.</div>
+          <strong>Try-On Model</strong>
+          <div id="modelTabs" class="model-tabs"></div>
+          <div id="modelGallery" class="model-gallery">Loading model photos...</div>
+          <div id="personTryOnPreview" class="person-preview">Choose a preset model before trying on wardrobe items.</div>
         </div>
 
         <p id="statusLine" class="status">Select one or more clothing images to begin.</p>
@@ -580,8 +634,8 @@
       <div class="panel">
         <div id="tryOnBoard" class="tryon-board">
           <article class="tryon-card">
-            <h3>Person Photo</h3>
-            <div id="tryOnPersonSlot" class="preview">Choose a person photo above.</div>
+            <h3>Selected Model</h3>
+            <div id="tryOnPersonSlot" class="preview">Choose a preset model above.</div>
           </article>
           <article class="tryon-card">
             <h3>Selected Outfit</h3>
@@ -604,8 +658,9 @@
     const API_BASE_URL = "http://127.0.0.1:5000";
     const WARDROBE_STORAGE_KEY = "digital_wardrobe_items";
     let latestResults = [];
-    let selectedPersonFile = null;
-    let selectedPersonPreview = "";
+    let availableModels = [];
+    let activeModelCategory = "Male";
+    let selectedModel = null;
     const selectedOutfitItems = {
       upper_body: null,
       lower_body: null
@@ -632,13 +687,116 @@
       return formData;
     }
 
+    function resolveApiUrl(path) {
+      if (!path) {
+        return "";
+      }
+
+      if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("data:")) {
+        return path;
+      }
+
+      return `${API_BASE_URL}${path}`;
+    }
+
     function setImageSlot(elementId, imageSrc, altText) {
       const slot = document.getElementById(elementId);
       slot.innerHTML = "";
       const image = document.createElement("img");
-      image.src = imageSrc;
+      image.src = resolveApiUrl(imageSrc);
       image.alt = altText;
       slot.appendChild(image);
+    }
+
+    function getModelCategories() {
+      return availableModels.map((group) => group.category);
+    }
+
+    function getActiveModelGroup() {
+      return availableModels.find((group) => group.category === activeModelCategory) || availableModels[0] || null;
+    }
+
+    function selectTryOnModel(model) {
+      selectedModel = model;
+      activeModelCategory = model.category;
+      setImageSlot("personTryOnPreview", model.image_url, `${model.display_name} try-on model`);
+      setImageSlot("tryOnPersonSlot", model.image_url, `${model.display_name} try-on model`);
+      renderModelTabs();
+      renderModelGallery();
+      setStatus(`Selected ${model.display_name} model ${model.filename}.`);
+    }
+
+    function renderModelTabs() {
+      const tabs = document.getElementById("modelTabs");
+      tabs.innerHTML = "";
+
+      getModelCategories().forEach((category) => {
+        const group = availableModels.find((entry) => entry.category === category);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `model-tab ${category === activeModelCategory ? "is-active" : ""}`;
+        button.textContent = group?.display_name || category;
+        button.addEventListener("click", () => {
+          activeModelCategory = category;
+          const firstModel = group && group.models.length > 0 ? group.models[0] : null;
+          if (firstModel) {
+            selectTryOnModel(firstModel);
+          } else {
+            renderModelTabs();
+            renderModelGallery();
+          }
+        });
+        tabs.appendChild(button);
+      });
+    }
+
+    function renderModelGallery() {
+      const gallery = document.getElementById("modelGallery");
+      const group = getActiveModelGroup();
+      gallery.innerHTML = "";
+
+      if (!group || group.models.length === 0) {
+        gallery.textContent = "No preset models found for this category.";
+        return;
+      }
+
+      group.models.forEach((model) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `model-card ${selectedModel?.id === model.id ? "is-selected" : ""}`;
+        button.setAttribute("aria-label", `Choose ${model.display_name} model ${model.filename}`);
+        button.innerHTML = `<img src="${resolveApiUrl(model.image_url)}" alt="${model.display_name} model ${model.filename}" />`;
+        button.addEventListener("click", () => selectTryOnModel(model));
+        gallery.appendChild(button);
+      });
+    }
+
+    async function loadTryOnModels() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/person-models`);
+        if (!response.ok) {
+          throw new Error("Failed to load model list.");
+        }
+
+        const data = await response.json();
+        availableModels = data.categories || [];
+        const firstGroup = getActiveModelGroup();
+        const firstModel = firstGroup && firstGroup.models.length > 0 ? firstGroup.models[0] : null;
+
+        renderModelTabs();
+        renderModelGallery();
+
+        if (firstModel) {
+          selectTryOnModel(firstModel);
+        } else {
+          document.getElementById("personTryOnPreview").textContent = "No preset model photos were found.";
+          document.getElementById("tryOnPersonSlot").textContent = "No preset model photos were found.";
+        }
+      } catch (error) {
+        console.error(error);
+        document.getElementById("modelGallery").textContent = "Could not load preset model photos.";
+        document.getElementById("personTryOnPreview").textContent = "Could not load preset model photos.";
+      }
     }
 
     function setOutfitSlot(elementId, item, emptyText) {
@@ -999,8 +1157,8 @@
     }
 
     async function runTryOn(item) {
-      if (!selectedPersonFile) {
-        alert("Please choose a person photo first.");
+      if (!selectedModel) {
+        alert("Please choose a preset try-on model first.");
         return;
       }
 
@@ -1009,14 +1167,15 @@
         return;
       }
 
-      setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
+      setImageSlot("tryOnPersonSlot", selectedModel.image_url, "Selected try-on model");
       selectedOutfitItems[item.category] = item;
       updateOutfitSlots();
       document.getElementById("tryOnResultSlot").textContent = "Generating try-on result. This can take a few minutes...";
       setStatus(`Generating try-on for ${item.filename}...`);
 
       const formData = new FormData();
-      formData.append("person", selectedPersonFile);
+      formData.append("model_category", selectedModel.category);
+      formData.append("model_filename", selectedModel.filename);
       formData.append("garment_image", item.preview_image);
       formData.append("category", item.category);
       formData.append("subcategory", item.subcategory || "");
@@ -1058,8 +1217,8 @@
     }
 
     async function runOutfitTryOn() {
-      if (!selectedPersonFile) {
-        alert("Please choose a person photo first.");
+      if (!selectedModel) {
+        alert("Please choose a preset try-on model first.");
         return;
       }
 
@@ -1070,7 +1229,7 @@
         return;
       }
 
-      setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
+      setImageSlot("tryOnPersonSlot", selectedModel.image_url, "Selected try-on model");
       updateOutfitSlots();
       document.getElementById("tryOnResultSlot").textContent = "Generating outfit try-on. This runs one step per selected item...";
       setStatus("Generating outfit try-on...");
@@ -1080,7 +1239,8 @@
       button.textContent = "Generating Outfit...";
 
       const formData = new FormData();
-      formData.append("person", selectedPersonFile);
+      formData.append("model_category", selectedModel.category);
+      formData.append("model_filename", selectedModel.filename);
       if (upperItem) {
         formData.append("upper_image", upperItem.preview_image);
         formData.append("upper_subcategory", upperItem.subcategory || "");
@@ -1118,25 +1278,7 @@
       }
     }
 
-    document.getElementById("personTryOnInput").addEventListener("change", (event) => {
-      selectedPersonFile = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-      selectedPersonPreview = "";
-
-      if (!selectedPersonFile) {
-        document.getElementById("personTryOnPreview").textContent = "Select a person photo before trying on wardrobe items.";
-        document.getElementById("tryOnPersonSlot").textContent = "Choose a person photo above.";
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.addEventListener("load", () => {
-        selectedPersonPreview = reader.result;
-        setImageSlot("personTryOnPreview", selectedPersonPreview, "Person photo preview");
-        setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
-      });
-      reader.readAsDataURL(selectedPersonFile);
-    });
-
+    loadTryOnModels();
     renderWardrobe();
     updateOutfitSlots();
   </script>

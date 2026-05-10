@@ -17,6 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent
 LOCAL_PACKAGES_DIR = BASE_DIR / ".packages"
 LOCAL_MODEL_DIR = BASE_DIR / "models" / "fashn-human-parser"
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
+PERSON_MODELS_DIR = FRONTEND_DIR / "person-models"
 FASHN_VTON_DIR = Path(os.environ.get(
     "FASHN_VTON_DIR",
     str(BASE_DIR / "models" / "fashn-vton-1.5"),
@@ -70,6 +71,11 @@ except Exception:
     SegformerImageProcessor = None
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+PERSON_MODEL_CATEGORIES = {
+    'Male': 'Male',
+    'Female': 'Female',
+    'Non-Binary': 'Non-Binary',
+}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 MAX_INPUT_IMAGE_SIDE = 1024
 CLOTHING_LABEL_IDS = {
@@ -234,6 +240,58 @@ def health():
         'human_parser_ready': human_parser is not None,
         'remove_bg_ready': remove is not None,
     })
+
+
+@app.route('/person-models', methods=['GET'])
+def list_person_models():
+    """
+    Returns bundled try-on model photos grouped by preset category.
+    """
+    categories = []
+    for category, display_name in PERSON_MODEL_CATEGORIES.items():
+        category_dir = PERSON_MODELS_DIR / category
+        models = []
+        if category_dir.exists():
+            for file_path in sorted(category_dir.iterdir()):
+                if file_path.is_file() and is_allowed_file(file_path.name):
+                    models.append({
+                        'id': f'{category}/{file_path.name}',
+                        'category': category,
+                        'display_name': display_name,
+                        'filename': file_path.name,
+                        'image_url': f'/person-models/{category}/{file_path.name}',
+                    })
+
+        categories.append({
+            'category': category,
+            'display_name': display_name,
+            'models': models,
+        })
+
+    return jsonify({
+        'ok': True,
+        'categories': categories,
+    })
+
+
+@app.route('/person-models/<category>/<filename>', methods=['GET'])
+def serve_person_model(category, filename):
+    """
+    Serves one bundled try-on model image.
+    """
+    if category not in PERSON_MODEL_CATEGORIES:
+        return jsonify({'error': 'Unknown model category.'}), 404
+
+    safe_filename = Path(filename).name
+    if not safe_filename or not is_allowed_file(safe_filename):
+        return jsonify({'error': 'Unsupported model image.'}), 404
+
+    category_dir = PERSON_MODELS_DIR / category
+    model_path = category_dir / safe_filename
+    if not model_path.exists() or not model_path.is_file():
+        return jsonify({'error': 'Model image not found.'}), 404
+
+    return send_from_directory(str(category_dir), safe_filename)
 
 
 def create_human_parser_backend():
@@ -445,6 +503,26 @@ def run_tryon_step(pipeline, person_image, garment_data_url, garment_category, g
         segmentation_free=True,
     )
     return result.images[0].convert('RGB'), tryon_category, None
+
+def load_selected_person_model():
+    category = request.form.get('model_category', '')
+    filename = Path(request.form.get('model_filename', '')).name
+
+    if category not in PERSON_MODEL_CATEGORIES:
+        return None, 'Select a valid try-on model category first.'
+
+    if not filename or not is_allowed_file(filename):
+        return None, 'Select a valid try-on model first.'
+
+    category_dir = (PERSON_MODELS_DIR / category).resolve()
+    model_path = (category_dir / filename).resolve()
+    if model_path.parent != category_dir or not model_path.exists() or not model_path.is_file():
+        return None, 'Selected try-on model was not found.'
+
+    try:
+        return Image.open(model_path).convert('RGB'), None
+    except Exception:
+        return None, 'Selected try-on model is not a valid image.'
 
 def create_clip_classifier():
     if torch is None or CLIPModel is None or CLIPProcessor is None:
@@ -1572,26 +1650,15 @@ def preview_result(preview_token):
 @app.route('/try-on', methods=['POST'])
 def try_on():
     """
-    Runs FASHN VTON with a person photo and a wardrobe item data URL.
+    Runs FASHN VTON with a bundled try-on model and a wardrobe item data URL.
     """
-    if 'person' not in request.files:
-        return jsonify({'error': 'Missing person photo field named "person".'}), 400
-
-    person_file = request.files['person']
-    if not person_file or person_file.filename == '':
-        return jsonify({'error': 'No person photo selected.'}), 400
-
-    if not is_allowed_file(person_file.filename):
-        return jsonify({'error': 'Unsupported person photo type.'}), 400
-
     pipeline, pipeline_error = get_tryon_pipeline()
     if pipeline_error:
         return jsonify({'error': pipeline_error}), 503
 
-    try:
-        person_image = Image.open(person_file.stream).convert('RGB')
-    except Exception:
-        return jsonify({'error': 'Uploaded person photo is not a valid image.'}), 400
+    person_image, model_error = load_selected_person_model()
+    if model_error:
+        return jsonify({'error': model_error}), 400
 
     try:
         started_at = time.perf_counter()
@@ -1619,16 +1686,6 @@ def try_on_outfit():
     """
     Runs sequential FASHN VTON steps for an upper-body + lower-body outfit.
     """
-    if 'person' not in request.files:
-        return jsonify({'error': 'Missing person photo field named "person".'}), 400
-
-    person_file = request.files['person']
-    if not person_file or person_file.filename == '':
-        return jsonify({'error': 'No person photo selected.'}), 400
-
-    if not is_allowed_file(person_file.filename):
-        return jsonify({'error': 'Unsupported person photo type.'}), 400
-
     upper_image = request.form.get('upper_image', '')
     lower_image = request.form.get('lower_image', '')
     if not upper_image and not lower_image:
@@ -1638,10 +1695,9 @@ def try_on_outfit():
     if pipeline_error:
         return jsonify({'error': pipeline_error}), 503
 
-    try:
-        current_image = Image.open(person_file.stream).convert('RGB')
-    except Exception:
-        return jsonify({'error': 'Uploaded person photo is not a valid image.'}), 400
+    current_image, model_error = load_selected_person_model()
+    if model_error:
+        return jsonify({'error': model_error}), 400
 
     try:
         started_at = time.perf_counter()

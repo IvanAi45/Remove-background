@@ -8,7 +8,7 @@ The project currently supports:
 
 - Batch clothing classification into `Upper Body`, `Lower Body`, and `Footwear`
 - Browser-local wardrobe storage with category shelves
-- Person-photo upload for try-on
+- Preset try-on models grouped as `Male`, `Female`, and `Non-Binary`
 - Virtual try-on from wardrobe items using FASHN VTON v1.5
 - Try-on support for upper-body and lower-body garments
 - Outfit try-on by selecting one upper-body item and one lower-body item
@@ -29,6 +29,10 @@ clothing-remover/
       fashn-vton-1.5/
   frontend/
     index.html
+    person-models/
+      Male/
+      Female/
+      Non-Binary/
 ```
 
 ## Requirements
@@ -103,7 +107,7 @@ http://127.0.0.1:5000/health
 1. Upload one or more clothing images.
 2. Click `Classify Batch Images`.
 3. The detected items are saved into `My Wardrobe`.
-4. Upload a person photo in `Person Photo For Try-On`.
+4. Choose a preset model from `Male`, `Female`, or `Non-Binary`.
 5. Click `Try On` on an upper-body or lower-body wardrobe item.
 6. Or click `Select Outfit` on one upper-body item and one lower-body item,
    then click `Generate Outfit Try-On`.
@@ -199,11 +203,18 @@ Footwear subcategories:
 
 This older endpoint removes the background only.
 
+### `GET /person-models`
+
+Response:
+
+- JSON containing preset try-on model categories and image URLs.
+
 ### `POST /try-on`
 
 Form data:
 
-- `person`: person photo file
+- `model_category`: preset model category, such as `Male`, `Female`, or `Non-Binary`
+- `model_filename`: preset model image filename from `/person-models`
 - `garment_image`: wardrobe item image as a data URL
 - `category`: wardrobe category, such as `upper_body` or `lower_body`
 - `subcategory`: wardrobe subcategory
@@ -216,7 +227,8 @@ Response:
 
 Form data:
 
-- `person`: person photo file
+- `model_category`: preset model category, such as `Male`, `Female`, or `Non-Binary`
+- `model_filename`: preset model image filename from `/person-models`
 - `upper_image`: optional upper-body wardrobe item image as a data URL
 - `upper_subcategory`: optional upper-body subcategory
 - `lower_image`: optional lower-body wardrobe item image as a data URL
@@ -232,6 +244,8 @@ Response:
 - The frontend displays the result on a warm wardrobe-style card background.
 - This project is intended for clothing extraction, fashion organization,
   electronic wardrobe, and virtual try-on demo use cases.
+- The app uses bundled preset model photos for try-on instead of collecting
+  user photos.
 - It does not generate or infer hidden body content.
 - `Classify Single Item` requires exactly one major clothing item in the image.
 - Classification uses a zero-shot CLIP classifier; quality depends on image
