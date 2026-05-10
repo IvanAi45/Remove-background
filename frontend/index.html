@@ -239,6 +239,7 @@
     }
 
     .model-card {
+      position: relative;
       display: grid;
       place-items: center;
       min-height: 132px;
@@ -262,6 +263,35 @@
       height: 120px;
       object-fit: contain;
       border-radius: 12px;
+    }
+
+    .model-card-label {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: rgba(47, 36, 25, 0.76);
+      color: #fffaf3;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .model-preview-stack {
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+    }
+
+    .ai-model-note {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 11px;
+      background: rgba(141, 91, 61, 0.12);
+      color: var(--accent-dark);
+      font-size: 0.84rem;
+      font-weight: 700;
     }
 
     .card-body {
@@ -324,6 +354,7 @@
     }
 
     .outfit-slot {
+      position: relative;
       min-height: 128px;
       display: grid;
       grid-template-columns: 96px 1fr;
@@ -342,6 +373,27 @@
       object-fit: contain;
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.55);
+    }
+
+    .outfit-remove {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(141, 91, 61, 0.12);
+      color: var(--accent-dark);
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    .outfit-remove:hover {
+      background: rgba(141, 91, 61, 0.24);
     }
 
     .tryon-card h3 {
@@ -708,6 +760,26 @@
       slot.appendChild(image);
     }
 
+    function setModelSlot(elementId, model) {
+      const slot = document.getElementById(elementId);
+      slot.innerHTML = "";
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "model-preview-stack";
+
+      const image = document.createElement("img");
+      image.src = resolveApiUrl(model.image_url);
+      image.alt = `${model.display_name} AI-generated try-on model`;
+
+      const note = document.createElement("span");
+      note.className = "ai-model-note";
+      note.textContent = "AI-generated model image";
+
+      wrapper.appendChild(image);
+      wrapper.appendChild(note);
+      slot.appendChild(wrapper);
+    }
+
     function getModelCategories() {
       return availableModels.map((group) => group.category);
     }
@@ -719,8 +791,8 @@
     function selectTryOnModel(model) {
       selectedModel = model;
       activeModelCategory = model.category;
-      setImageSlot("personTryOnPreview", model.image_url, `${model.display_name} try-on model`);
-      setImageSlot("tryOnPersonSlot", model.image_url, `${model.display_name} try-on model`);
+      setModelSlot("personTryOnPreview", model);
+      setModelSlot("tryOnPersonSlot", model);
       renderModelTabs();
       renderModelGallery();
       setStatus(`Selected ${model.display_name} model ${model.filename}.`);
@@ -765,7 +837,10 @@
         button.type = "button";
         button.className = `model-card ${selectedModel?.id === model.id ? "is-selected" : ""}`;
         button.setAttribute("aria-label", `Choose ${model.display_name} model ${model.filename}`);
-        button.innerHTML = `<img src="${resolveApiUrl(model.image_url)}" alt="${model.display_name} model ${model.filename}" />`;
+        button.innerHTML = `
+          <img src="${resolveApiUrl(model.image_url)}" alt="${model.display_name} AI-generated model ${model.filename}" />
+          <span class="model-card-label">AI-generated</span>
+        `;
         button.addEventListener("click", () => selectTryOnModel(model));
         gallery.appendChild(button);
       });
@@ -807,17 +882,28 @@
       }
 
       slot.innerHTML = `
+        <button class="outfit-remove" type="button" data-role="remove-outfit" aria-label="Remove selected ${formatCategory(item.category)} item">x</button>
         <img src="${item.preview_image}" alt="${item.filename}" />
         <div>
           <strong>${item.filename}</strong>
           <div>${formatCategory(item.subcategory || item.category)}</div>
         </div>
       `;
+
+      slot.querySelector('[data-role="remove-outfit"]').addEventListener("click", () => {
+        removeOutfitItem(item.category);
+      });
     }
 
     function updateOutfitSlots() {
       setOutfitSlot("tryOnUpperSlot", selectedOutfitItems.upper_body, "Select an upper-body item.");
       setOutfitSlot("tryOnLowerSlot", selectedOutfitItems.lower_body, "Select a lower-body item.");
+    }
+
+    function removeOutfitItem(category) {
+      selectedOutfitItems[category] = null;
+      updateOutfitSlots();
+      setStatus(`Removed selected ${formatCategory(category)} item from outfit try-on.`);
     }
 
     function setStatus(message) {
@@ -1167,7 +1253,7 @@
         return;
       }
 
-      setImageSlot("tryOnPersonSlot", selectedModel.image_url, "Selected try-on model");
+      setModelSlot("tryOnPersonSlot", selectedModel);
       selectedOutfitItems[item.category] = item;
       updateOutfitSlots();
       document.getElementById("tryOnResultSlot").textContent = "Generating try-on result. This can take a few minutes...";
@@ -1229,7 +1315,7 @@
         return;
       }
 
-      setImageSlot("tryOnPersonSlot", selectedModel.image_url, "Selected try-on model");
+      setModelSlot("tryOnPersonSlot", selectedModel);
       updateOutfitSlots();
       document.getElementById("tryOnResultSlot").textContent = "Generating outfit try-on. This runs one step per selected item...";
       setStatus("Generating outfit try-on...");
