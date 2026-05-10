@@ -269,6 +269,32 @@
       border-radius: 14px;
     }
 
+    .outfit-selection {
+      display: grid;
+      gap: 12px;
+    }
+
+    .outfit-slot {
+      min-height: 128px;
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      gap: 12px;
+      align-items: center;
+      border-radius: 14px;
+      border: 1px dashed var(--line);
+      padding: 10px;
+      background: rgba(255, 251, 245, 0.62);
+      color: var(--muted);
+    }
+
+    .outfit-slot img {
+      width: 96px;
+      height: 96px;
+      object-fit: contain;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
     .tryon-card h3 {
       margin: 0 0 10px;
       font-size: 1rem;
@@ -558,8 +584,12 @@
             <div id="tryOnPersonSlot" class="preview">Choose a person photo above.</div>
           </article>
           <article class="tryon-card">
-            <h3>Wardrobe Item</h3>
-            <div id="tryOnGarmentSlot" class="preview">Click Try On from an upper-body or lower-body wardrobe item.</div>
+            <h3>Selected Outfit</h3>
+            <div class="outfit-selection">
+              <div id="tryOnUpperSlot" class="outfit-slot">Select an upper-body item.</div>
+              <div id="tryOnLowerSlot" class="outfit-slot">Select a lower-body item.</div>
+              <button id="outfitTryOnButton" class="secondary" type="button" onclick="runOutfitTryOn()">Generate Outfit Try-On</button>
+            </div>
           </article>
           <article class="tryon-card">
             <h3>Try-On Result</h3>
@@ -576,6 +606,10 @@
     let latestResults = [];
     let selectedPersonFile = null;
     let selectedPersonPreview = "";
+    const selectedOutfitItems = {
+      upper_body: null,
+      lower_body: null
+    };
 
     function getSelectedFiles() {
       const fileInput = document.getElementById("fileInput");
@@ -605,6 +639,27 @@
       image.src = imageSrc;
       image.alt = altText;
       slot.appendChild(image);
+    }
+
+    function setOutfitSlot(elementId, item, emptyText) {
+      const slot = document.getElementById(elementId);
+      if (!item) {
+        slot.textContent = emptyText;
+        return;
+      }
+
+      slot.innerHTML = `
+        <img src="${item.preview_image}" alt="${item.filename}" />
+        <div>
+          <strong>${item.filename}</strong>
+          <div>${formatCategory(item.subcategory || item.category)}</div>
+        </div>
+      `;
+    }
+
+    function updateOutfitSlots() {
+      setOutfitSlot("tryOnUpperSlot", selectedOutfitItems.upper_body, "Select an upper-body item.");
+      setOutfitSlot("tryOnLowerSlot", selectedOutfitItems.lower_body, "Select a lower-body item.");
     }
 
     function setStatus(message) {
@@ -823,6 +878,7 @@
           </div>
           <div class="card-actions">
             <button class="secondary" type="button" data-role="try-on" ${canTryOn ? "" : "disabled"}>Try On</button>
+            <button class="ghost" type="button" data-role="select-outfit" ${canTryOn ? "" : "disabled"}>Select Outfit</button>
           </div>
         </div>
       `;
@@ -833,6 +889,10 @@
 
       wrapper.querySelector('[data-role="try-on"]').addEventListener("click", () => {
         runTryOn(item);
+      });
+
+      wrapper.querySelector('[data-role="select-outfit"]').addEventListener("click", () => {
+        selectOutfitItem(item);
       });
 
       return wrapper;
@@ -950,7 +1010,8 @@
       }
 
       setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
-      setImageSlot("tryOnGarmentSlot", item.preview_image, item.filename);
+      selectedOutfitItems[item.category] = item;
+      updateOutfitSlots();
       document.getElementById("tryOnResultSlot").textContent = "Generating try-on result. This can take a few minutes...";
       setStatus(`Generating try-on for ${item.filename}...`);
 
@@ -985,6 +1046,78 @@
       }
     }
 
+    function selectOutfitItem(item) {
+      if (item.category !== "upper_body" && item.category !== "lower_body") {
+        alert("Only upper-body and lower-body items can be selected for outfit try-on.");
+        return;
+      }
+
+      selectedOutfitItems[item.category] = item;
+      updateOutfitSlots();
+      setStatus(`Selected ${item.filename} for outfit try-on.`);
+    }
+
+    async function runOutfitTryOn() {
+      if (!selectedPersonFile) {
+        alert("Please choose a person photo first.");
+        return;
+      }
+
+      const upperItem = selectedOutfitItems.upper_body;
+      const lowerItem = selectedOutfitItems.lower_body;
+      if (!upperItem && !lowerItem) {
+        alert("Please select an upper-body or lower-body wardrobe item first.");
+        return;
+      }
+
+      setImageSlot("tryOnPersonSlot", selectedPersonPreview, "Selected person photo");
+      updateOutfitSlots();
+      document.getElementById("tryOnResultSlot").textContent = "Generating outfit try-on. This runs one step per selected item...";
+      setStatus("Generating outfit try-on...");
+
+      const button = document.getElementById("outfitTryOnButton");
+      button.disabled = true;
+      button.textContent = "Generating Outfit...";
+
+      const formData = new FormData();
+      formData.append("person", selectedPersonFile);
+      if (upperItem) {
+        formData.append("upper_image", upperItem.preview_image);
+        formData.append("upper_subcategory", upperItem.subcategory || "");
+      }
+      if (lowerItem) {
+        formData.append("lower_image", lowerItem.preview_image);
+        formData.append("lower_subcategory", lowerItem.subcategory || "");
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/try-on-outfit`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          alert(error?.error || "Outfit try-on failed.");
+          document.getElementById("tryOnResultSlot").textContent = "Outfit try-on failed.";
+          setStatus("Outfit try-on failed.");
+          return;
+        }
+
+        const data = await response.json();
+        setImageSlot("tryOnResultSlot", data.result_image, "Outfit virtual try-on result");
+        setStatus(`Outfit try-on complete in ${data.processing_ms} ms.`);
+      } catch (error) {
+        console.error(error);
+        alert("Something went wrong while generating outfit try-on.");
+        document.getElementById("tryOnResultSlot").textContent = "Outfit try-on failed.";
+        setStatus("Unexpected error while generating outfit try-on.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "Generate Outfit Try-On";
+      }
+    }
+
     document.getElementById("personTryOnInput").addEventListener("change", (event) => {
       selectedPersonFile = event.target.files && event.target.files[0] ? event.target.files[0] : null;
       selectedPersonPreview = "";
@@ -1005,6 +1138,7 @@
     });
 
     renderWardrobe();
+    updateOutfitSlots();
   </script>
 </body>
 </html>

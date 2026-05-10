@@ -11,6 +11,7 @@ The project currently supports:
 - Person-photo upload for try-on
 - Virtual try-on from wardrobe items using FASHN VTON v1.5
 - Try-on support for upper-body and lower-body garments
+- Outfit try-on by selecting one upper-body item and one lower-body item
 
 Footwear can be stored in the wardrobe, but shoe try-on is not supported by the
 current FASHN VTON model.
@@ -104,7 +105,9 @@ http://127.0.0.1:5000/health
 3. The detected items are saved into `My Wardrobe`.
 4. Upload a person photo in `Person Photo For Try-On`.
 5. Click `Try On` on an upper-body or lower-body wardrobe item.
-6. The generated result appears in the `Virtual Try-On` section.
+6. Or click `Select Outfit` on one upper-body item and one lower-body item,
+   then click `Generate Outfit Try-On`.
+7. The generated result appears in the `Virtual Try-On` section.
 
 ## Run The Frontend
 
@@ -208,6 +211,20 @@ Form data:
 Response:
 
 - JSON with `result_image`, a data URL containing the generated try-on image
+
+### `POST /try-on-outfit`
+
+Form data:
+
+- `person`: person photo file
+- `upper_image`: optional upper-body wardrobe item image as a data URL
+- `upper_subcategory`: optional upper-body subcategory
+- `lower_image`: optional lower-body wardrobe item image as a data URL
+- `lower_subcategory`: optional lower-body subcategory
+
+Response:
+
+- JSON with `result_image`, a data URL containing the generated outfit image
 
 ## Notes
 

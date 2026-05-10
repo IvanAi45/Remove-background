@@ -424,6 +424,28 @@ def get_tryon_pipeline():
     except Exception as exc:
         return None, f'Failed to load FASHN VTON: {exc}'
 
+def run_tryon_step(pipeline, person_image, garment_data_url, garment_category, garment_subcategory, seed=42):
+    tryon_category = map_wardrobe_category_to_tryon(garment_category, garment_subcategory)
+    if tryon_category is None:
+        return None, None, 'This wardrobe item cannot be tried on. FASHN VTON supports upper-body, lower-body, and one-piece clothing only.'
+
+    garment_image = data_url_to_image(garment_data_url)
+    if garment_image is None:
+        return None, None, 'Missing or invalid wardrobe garment image.'
+
+    result = pipeline(
+        person_image=person_image.convert('RGB'),
+        garment_image=flatten_transparency(garment_image),
+        category=tryon_category,
+        garment_photo_type='flat-lay',
+        num_samples=1,
+        num_timesteps=20,
+        guidance_scale=1.5,
+        seed=seed,
+        segmentation_free=True,
+    )
+    return result.images[0].convert('RGB'), tryon_category, None
+
 def create_clip_classifier():
     if torch is None or CLIPModel is None or CLIPProcessor is None:
         return None
@@ -1562,19 +1584,6 @@ def try_on():
     if not is_allowed_file(person_file.filename):
         return jsonify({'error': 'Unsupported person photo type.'}), 400
 
-    garment_data_url = request.form.get('garment_image', '')
-    garment_category = request.form.get('category', '')
-    garment_subcategory = request.form.get('subcategory', '')
-    tryon_category = map_wardrobe_category_to_tryon(garment_category, garment_subcategory)
-    if tryon_category is None:
-        return jsonify({
-            'error': 'This wardrobe item cannot be tried on. FASHN VTON supports upper-body, lower-body, and one-piece clothing only.'
-        }), 400
-
-    garment_image = data_url_to_image(garment_data_url)
-    if garment_image is None:
-        return jsonify({'error': 'Missing or invalid wardrobe garment image.'}), 400
-
     pipeline, pipeline_error = get_tryon_pipeline()
     if pipeline_error:
         return jsonify({'error': pipeline_error}), 503
@@ -1586,18 +1595,16 @@ def try_on():
 
     try:
         started_at = time.perf_counter()
-        result = pipeline(
+        output, tryon_category, step_error = run_tryon_step(
+            pipeline=pipeline,
             person_image=person_image,
-            garment_image=flatten_transparency(garment_image),
-            category=tryon_category,
-            garment_photo_type='flat-lay',
-            num_samples=1,
-            num_timesteps=20,
-            guidance_scale=1.5,
+            garment_data_url=request.form.get('garment_image', ''),
+            garment_category=request.form.get('category', ''),
+            garment_subcategory=request.form.get('subcategory', ''),
             seed=42,
-            segmentation_free=True,
         )
-        output = result.images[0].convert('RGB')
+        if step_error:
+            return jsonify({'error': step_error}), 400
         return jsonify({
             'ok': True,
             'category': tryon_category,
@@ -1606,6 +1613,74 @@ def try_on():
         })
     except Exception as exc:
         return jsonify({'error': f'Try-on generation failed: {exc}'}), 500
+
+@app.route('/try-on-outfit', methods=['POST'])
+def try_on_outfit():
+    """
+    Runs sequential FASHN VTON steps for an upper-body + lower-body outfit.
+    """
+    if 'person' not in request.files:
+        return jsonify({'error': 'Missing person photo field named "person".'}), 400
+
+    person_file = request.files['person']
+    if not person_file or person_file.filename == '':
+        return jsonify({'error': 'No person photo selected.'}), 400
+
+    if not is_allowed_file(person_file.filename):
+        return jsonify({'error': 'Unsupported person photo type.'}), 400
+
+    upper_image = request.form.get('upper_image', '')
+    lower_image = request.form.get('lower_image', '')
+    if not upper_image and not lower_image:
+        return jsonify({'error': 'Select at least one upper-body or lower-body wardrobe item.'}), 400
+
+    pipeline, pipeline_error = get_tryon_pipeline()
+    if pipeline_error:
+        return jsonify({'error': pipeline_error}), 503
+
+    try:
+        current_image = Image.open(person_file.stream).convert('RGB')
+    except Exception:
+        return jsonify({'error': 'Uploaded person photo is not a valid image.'}), 400
+
+    try:
+        started_at = time.perf_counter()
+        steps = []
+
+        if upper_image:
+            current_image, tryon_category, step_error = run_tryon_step(
+                pipeline=pipeline,
+                person_image=current_image,
+                garment_data_url=upper_image,
+                garment_category='upper_body',
+                garment_subcategory=request.form.get('upper_subcategory', ''),
+                seed=42,
+            )
+            if step_error:
+                return jsonify({'error': f'Upper-body try-on failed: {step_error}'}), 400
+            steps.append(tryon_category)
+
+        if lower_image:
+            current_image, tryon_category, step_error = run_tryon_step(
+                pipeline=pipeline,
+                person_image=current_image,
+                garment_data_url=lower_image,
+                garment_category='lower_body',
+                garment_subcategory=request.form.get('lower_subcategory', ''),
+                seed=43,
+            )
+            if step_error:
+                return jsonify({'error': f'Lower-body try-on failed: {step_error}'}), 400
+            steps.append(tryon_category)
+
+        return jsonify({
+            'ok': True,
+            'categories': steps,
+            'result_image': image_to_data_url(current_image, max_side=None),
+            'processing_ms': int((time.perf_counter() - started_at) * 1000),
+        })
+    except Exception as exc:
+        return jsonify({'error': f'Outfit try-on generation failed: {exc}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
