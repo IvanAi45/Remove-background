@@ -78,6 +78,8 @@ PERSON_MODEL_CATEGORIES = {
 }
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 MAX_INPUT_IMAGE_SIDE = 1024
+TRYON_NUM_TIMESTEPS = int(os.environ.get('TRYON_NUM_TIMESTEPS', '12'))
+TRYON_GUIDANCE_SCALE = float(os.environ.get('TRYON_GUIDANCE_SCALE', '1.5'))
 CLOTHING_LABEL_IDS = {
     3,  # top
     4,  # dress
@@ -509,8 +511,8 @@ def run_tryon_image_step(
         category=tryon_category,
         garment_photo_type=garment_photo_type,
         num_samples=1,
-        num_timesteps=20,
-        guidance_scale=1.5,
+        num_timesteps=TRYON_NUM_TIMESTEPS,
+        guidance_scale=TRYON_GUIDANCE_SCALE,
         seed=seed,
         segmentation_free=True,
     )
