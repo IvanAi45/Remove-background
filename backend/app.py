@@ -445,6 +445,8 @@ def flatten_transparency(image, background=(255, 255, 255)):
     return canvas.convert('RGB')
 
 def map_wardrobe_category_to_tryon(category, subcategory):
+    if category == 'one_piece':
+        return 'one-pieces'
     if category == 'upper_body':
         if subcategory == 'dress':
             return 'one-pieces'
@@ -482,20 +484,30 @@ def get_tryon_pipeline():
     except Exception as exc:
         return None, f'Failed to load FASHN VTON: {exc}'
 
-def run_tryon_step(pipeline, person_image, garment_data_url, garment_category, garment_subcategory, seed=42):
+def run_tryon_image_step(
+    pipeline,
+    person_image,
+    garment_image,
+    garment_category,
+    garment_subcategory,
+    garment_photo_type='flat-lay',
+    seed=42,
+):
     tryon_category = map_wardrobe_category_to_tryon(garment_category, garment_subcategory)
     if tryon_category is None:
         return None, None, 'This wardrobe item cannot be tried on. FASHN VTON supports upper-body, lower-body, and one-piece clothing only.'
 
-    garment_image = data_url_to_image(garment_data_url)
     if garment_image is None:
         return None, None, 'Missing or invalid wardrobe garment image.'
+
+    if garment_photo_type not in {'flat-lay', 'model'}:
+        return None, None, 'Unsupported garment photo type.'
 
     result = pipeline(
         person_image=person_image.convert('RGB'),
         garment_image=flatten_transparency(garment_image),
         category=tryon_category,
-        garment_photo_type='flat-lay',
+        garment_photo_type=garment_photo_type,
         num_samples=1,
         num_timesteps=20,
         guidance_scale=1.5,
@@ -503,6 +515,26 @@ def run_tryon_step(pipeline, person_image, garment_data_url, garment_category, g
         segmentation_free=True,
     )
     return result.images[0].convert('RGB'), tryon_category, None
+
+def run_tryon_step(
+    pipeline,
+    person_image,
+    garment_data_url,
+    garment_category,
+    garment_subcategory,
+    garment_photo_type='flat-lay',
+    seed=42,
+):
+    garment_image = data_url_to_image(garment_data_url)
+    return run_tryon_image_step(
+        pipeline=pipeline,
+        person_image=person_image,
+        garment_image=garment_image,
+        garment_category=garment_category,
+        garment_subcategory=garment_subcategory,
+        garment_photo_type=garment_photo_type,
+        seed=seed,
+    )
 
 def load_selected_person_model():
     category = request.form.get('model_category', '')
@@ -1680,6 +1712,57 @@ def try_on():
         })
     except Exception as exc:
         return jsonify({'error': f'Try-on generation failed: {exc}'}), 500
+
+@app.route('/try-on-worn-garment', methods=['POST'])
+def try_on_worn_garment():
+    """
+    Runs FASHN VTON using a garment photo where the clothing is worn by another person.
+    """
+    if 'garment' not in request.files:
+        return jsonify({'error': 'Missing worn garment photo field named "garment".'}), 400
+
+    garment_file = request.files['garment']
+    if not garment_file or garment_file.filename == '':
+        return jsonify({'error': 'No worn garment photo selected.'}), 400
+
+    if not is_allowed_file(garment_file.filename):
+        return jsonify({'error': 'Unsupported worn garment photo type.'}), 400
+
+    pipeline, pipeline_error = get_tryon_pipeline()
+    if pipeline_error:
+        return jsonify({'error': pipeline_error}), 503
+
+    person_image, model_error = load_selected_person_model()
+    if model_error:
+        return jsonify({'error': model_error}), 400
+
+    try:
+        garment_image = Image.open(garment_file.stream).convert('RGB')
+    except Exception:
+        return jsonify({'error': 'Uploaded worn garment photo is not a valid image.'}), 400
+
+    try:
+        started_at = time.perf_counter()
+        output, tryon_category, step_error = run_tryon_image_step(
+            pipeline=pipeline,
+            person_image=person_image,
+            garment_image=garment_image,
+            garment_category=request.form.get('category', ''),
+            garment_subcategory=request.form.get('subcategory', ''),
+            garment_photo_type='model',
+            seed=44,
+        )
+        if step_error:
+            return jsonify({'error': step_error}), 400
+        return jsonify({
+            'ok': True,
+            'category': tryon_category,
+            'garment_photo_type': 'model',
+            'result_image': image_to_data_url(output, max_side=None),
+            'processing_ms': int((time.perf_counter() - started_at) * 1000),
+        })
+    except Exception as exc:
+        return jsonify({'error': f'Worn-garment try-on generation failed: {exc}'}), 500
 
 @app.route('/try-on-outfit', methods=['POST'])
 def try_on_outfit():

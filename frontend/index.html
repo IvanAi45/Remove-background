@@ -77,6 +77,32 @@
       margin-bottom: 16px;
     }
 
+    .direct-tryon-controls {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .direct-tryon-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      gap: 10px;
+      align-items: center;
+    }
+
+    select {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 8px 12px;
+      background: rgba(255, 251, 245, 0.9);
+      color: var(--ink);
+      font: inherit;
+    }
+
     .tryon-controls {
       display: grid;
       gap: 12px;
@@ -567,6 +593,10 @@
       .model-gallery {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+
+      .direct-tryon-row {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -584,6 +614,19 @@
           <input class="file-input" type="file" id="fileInput" accept="image/*" multiple />
           <button id="classifyButton" onclick="classifyBatchImages()">Classify Batch Images</button>
           <button class="ghost" onclick="clearWardrobe()">Clear Wardrobe</button>
+        </div>
+
+        <div class="direct-tryon-controls">
+          <strong>Try On Clothing From A Worn Photo</strong>
+          <div class="direct-tryon-row">
+            <input class="file-input" type="file" id="wornGarmentInput" accept="image/*" />
+            <select id="wornGarmentCategory">
+              <option value="upper_body">Upper Body</option>
+              <option value="lower_body">Lower Body</option>
+              <option value="one_piece">One-Piece / Dress</option>
+            </select>
+          </div>
+          <button class="secondary" id="wornGarmentTryOnButton" type="button" onclick="runWornGarmentTryOn()">Generate From Worn Photo</button>
         </div>
 
         <div class="tryon-controls">
@@ -1288,6 +1331,63 @@
         alert("Something went wrong while generating try-on.");
         document.getElementById("tryOnResultSlot").textContent = "Try-on failed.";
         setStatus("Unexpected error while generating try-on.");
+      }
+    }
+
+    async function runWornGarmentTryOn() {
+      if (!selectedModel) {
+        alert("Please choose a preset try-on model first.");
+        return;
+      }
+
+      const fileInput = document.getElementById("wornGarmentInput");
+      const garmentFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!garmentFile) {
+        alert("Please upload a photo where another person is wearing the clothing.");
+        return;
+      }
+
+      const category = document.getElementById("wornGarmentCategory").value;
+      setModelSlot("tryOnPersonSlot", selectedModel);
+      document.getElementById("tryOnResultSlot").textContent = "Generating try-on from worn garment photo. This can take a few minutes...";
+      setStatus(`Generating try-on from ${garmentFile.name}...`);
+
+      const button = document.getElementById("wornGarmentTryOnButton");
+      button.disabled = true;
+      button.textContent = "Generating From Worn Photo...";
+
+      const formData = new FormData();
+      formData.append("model_category", selectedModel.category);
+      formData.append("model_filename", selectedModel.filename);
+      formData.append("garment", garmentFile);
+      formData.append("category", category);
+      formData.append("subcategory", category === "one_piece" ? "dress" : "");
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/try-on-worn-garment`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          alert(error?.error || "Worn-garment try-on failed.");
+          document.getElementById("tryOnResultSlot").textContent = "Worn-garment try-on failed.";
+          setStatus("Worn-garment try-on failed.");
+          return;
+        }
+
+        const data = await response.json();
+        setImageSlot("tryOnResultSlot", data.result_image, "Worn-garment virtual try-on result");
+        setStatus(`Worn-garment try-on complete in ${data.processing_ms} ms.`);
+      } catch (error) {
+        console.error(error);
+        alert("Something went wrong while generating worn-garment try-on.");
+        document.getElementById("tryOnResultSlot").textContent = "Worn-garment try-on failed.";
+        setStatus("Unexpected error while generating worn-garment try-on.");
+      } finally {
+        button.disabled = false;
+        button.textContent = "Generate From Worn Photo";
       }
     }
 

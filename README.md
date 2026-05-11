@@ -10,6 +10,7 @@ The project currently supports:
 - Browser-local wardrobe storage with category shelves
 - Preset try-on models grouped as `Male`, `Female`, and `Non-Binary`
 - Virtual try-on from wardrobe items using FASHN VTON v1.5
+- Direct try-on from a photo where another person is already wearing the garment
 - Try-on support for upper-body and lower-body garments
 - Outfit try-on by selecting one upper-body item and one lower-body item
 
@@ -111,7 +112,10 @@ http://127.0.0.1:5000/health
 5. Click `Try On` on an upper-body or lower-body wardrobe item.
 6. Or click `Select Outfit` on one upper-body item and one lower-body item,
    then click `Generate Outfit Try-On`.
-7. The generated result appears in the `Virtual Try-On` section.
+7. To use clothing from a photo where another person is wearing it, upload that
+   photo in `Try On Clothing From A Worn Photo`, choose the garment category,
+   and click `Generate From Worn Photo`.
+8. The generated result appears in the `Virtual Try-On` section.
 
 ## Run The Frontend
 
@@ -223,6 +227,20 @@ Response:
 
 - JSON with `result_image`, a data URL containing the generated try-on image
 
+### `POST /try-on-worn-garment`
+
+Form data:
+
+- `model_category`: preset model category, such as `Male`, `Female`, or `Non-Binary`
+- `model_filename`: preset model image filename from `/person-models`
+- `garment`: image file where another person is wearing the target garment
+- `category`: target garment category, such as `upper_body`, `lower_body`, or `one_piece`
+- `subcategory`: optional garment subtype; use `dress` for one-piece dresses
+
+Response:
+
+- JSON with `result_image`, a data URL containing the generated try-on image
+
 ### `POST /try-on-outfit`
 
 Form data:
@@ -246,6 +264,9 @@ Response:
   electronic wardrobe, and virtual try-on demo use cases.
 - The app uses bundled preset model photos for try-on instead of collecting
   user photos.
+- FASHN VTON can use both flat-lay product shots and worn garment photos as
+  garment inputs. Worn garment photos work best when the garment is clearly
+  visible and not heavily covered by arms, bags, or complex poses.
 - It does not generate or infer hidden body content.
 - `Classify Single Item` requires exactly one major clothing item in the image.
 - Classification uses a zero-shot CLIP classifier; quality depends on image
